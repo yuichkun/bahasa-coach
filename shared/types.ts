@@ -1,0 +1,92 @@
+import { z } from "zod";
+
+export const annotationSchema = z.object({
+  term: z.string(),
+  meaning: z.string(),
+  formal: z.string(),
+  note: z.string(),
+});
+export const exerciseSchema = z.object({
+  title: z.string(),
+  prompt: z.string(),
+  context: z.string(),
+  focus: z.array(z.string()),
+  annotations: z.array(annotationSchema),
+});
+export const feedbackSchema = z.object({
+  natural: z.string(),
+  explanation: z.string(),
+  points: z
+    .array(z.object({ original: z.string(), suggestion: z.string(), reason: z.string() }))
+    .max(3),
+  annotations: z.array(annotationSchema),
+  nextFocus: z.array(z.string()),
+});
+export const correctionSchema = z.object({ corrected: z.string(), explanation: z.string() });
+export type Annotation = z.infer<typeof annotationSchema>;
+export type Exercise = z.infer<typeof exerciseSchema>;
+export type Feedback = z.infer<typeof feedbackSchema>;
+export type Direction = "ja-id" | "id-ja";
+export type Kind = "voice" | "writing";
+export interface TranscriptRow {
+  id: string;
+  role: "user" | "assistant";
+  original: string;
+  corrected: string | null;
+  revisionStale: boolean;
+  startMs: number;
+  endMs: number;
+}
+export interface Lesson {
+  id: string;
+  kind: Kind;
+  direction: Direction;
+  topic: string;
+  title: string;
+  exercise: Exercise | null;
+  draft: string;
+  status: "draft" | "active" | "completed" | "interrupted";
+  createdAt: number;
+  updatedAt: number;
+  rows: TranscriptRow[];
+  attempts: Attempt[];
+}
+export interface Attempt {
+  id: string;
+  answer: string;
+  feedback: Feedback;
+  createdAt: number;
+}
+export interface LiveInfo {
+  lessonId: string;
+  sessionId: string | null;
+  owner: string;
+  status: "connecting" | "active" | "closing";
+  seconds: number;
+  startedAt: number;
+}
+export interface AppStatus {
+  chatgpt: {
+    connected: boolean;
+    email: string | null;
+    plan: string | null;
+    pending: boolean;
+    error: string | null;
+  };
+  voice: {
+    configured: boolean;
+    active: LiveInfo | null;
+    monthSeconds: number;
+    unconfirmed: number;
+    pricePerMinute: number;
+  };
+}
+export type AppEvent =
+  | { type: "lesson"; lesson: Lesson }
+  | { type: "status"; status: AppStatus }
+  | { type: "live"; event: Record<string, unknown>; lessonId: string }
+  | { type: "notice"; message: string };
+export const TOPICS = ["仕事の説明", "意見と理由", "依頼", "断り方", "代案"];
+export function voiceCost(seconds: number) {
+  return (seconds / 60) * 0.05;
+}

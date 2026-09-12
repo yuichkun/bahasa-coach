@@ -1,0 +1,5 @@
+# Bahasa Coach interface
+
+The user-approved MVP brief is the visual authority: a simple desk tool with captions and learner writing as the primary content, not a promotional page. Operate mode. The grounded direction is a bilingual meeting notebook: quiet paper, editorial rules, a narrow navigation rail, large readable conversation lines, and a margin for explanations. This carries both sparse first-run states and dense study records. No decorative image generation or additional direction-selection workflow is needed for this explicitly scoped MVP.
+
+Palette: warm off-white canvas, white working surface, charcoal text, muted forest green action/focus color, subdued terracotta for errors. Use 1px rules, restrained corner radii, and no nested cards. Main text uses native Japanese system fonts for fast local operation; headings are sized for work, not a display hero. Use inline SVG icons in a consistent stroke. Captions take the main column; assistance lives in the margin. Writing uses the same reading width. Keyboard focus and term popovers must be fully usable without hover.
