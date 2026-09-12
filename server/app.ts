@@ -136,6 +136,53 @@ export async function createApp(options: {
   });
   app.get("/api/lessons", () => store.list());
   app.get("/api/lessons/:id", (req) => store.get((req.params as { id: string }).id));
+  app.post("/api/lookup", async (req) => {
+    const { term, context } = z
+      .object({ term: z.string().trim().min(1).max(100), context: z.string().min(1).max(1500) })
+      .parse(req.body);
+    if (
+      !/^[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*$/u.test(term) ||
+      !context.toLocaleLowerCase().includes(term.toLocaleLowerCase())
+    )
+      throw Object.assign(new Error("本文内の単語を選んでください。"), { statusCode: 400 });
+    return tutor.lookup(term, context);
+  });
+  app.post("/api/practice", (req) => {
+    const { focusId, mode, kind } = z
+      .object({
+        focusId: z.string().uuid(),
+        mode: z.enum(["retry", "transfer"]),
+        kind: z.enum(["voice", "writing"]),
+      })
+      .parse(req.body);
+    const focus = store.learning.focus(focusId),
+      source = store.get(focus.sourceLessonId);
+    if (focus.state === "withdrawn") throw new Error("元の回答が変更されています。");
+    store.db.exec("BEGIN");
+    try {
+      const lesson = store.create(kind, source.direction, source.topic);
+      store.learning.attach(lesson.id, focusId, mode);
+      store.db.exec("COMMIT");
+      return store.get(lesson.id);
+    } catch (error) {
+      store.db.exec("ROLLBACK");
+      throw error;
+    }
+  });
+  app.post("/api/lessons/:id/hint", (req) => {
+    const id = (req.params as { id: string }).id;
+    return { hint: store.learning.hint(id), lesson: store.get(id) };
+  });
+  app.post("/api/lessons/:id/assistance", (req) => {
+    const id = (req.params as { id: string }).id;
+    store.learning.hint(id);
+    return { ok: true };
+  });
+  app.post("/api/lessons/:id/reply-hints", (req) => {
+    const id = (req.params as { id: string }).id;
+    const { source } = z.object({ source: z.string().min(1).max(8000) }).parse(req.body);
+    return once(`hints:${id}:${source}`, () => tutor.replyHints(id, source));
+  });
   app.post("/api/lessons", async (req) => {
     const body = z
       .object({
@@ -205,10 +252,6 @@ export async function createApp(options: {
       .parse(req.body);
     if (!clients.has(owner))
       throw new Error("字幕の接続が準備できていません。再読み込みしてください。");
-    if (!(await backend.status()).connected)
-      throw Object.assign(new Error("接続設定から ChatGPT にサインインしてください。"), {
-        statusCode: 401,
-      });
     return live.start(owner, lessonId, sdp);
   });
   app.post("/api/live/action", (req) => {

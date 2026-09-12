@@ -5,13 +5,16 @@ import {
   type AppEvent,
   type AppStatus,
   type Direction,
-  type Feedback,
   type Lesson,
   type TranscriptRow,
+  type PracticeFocus,
 } from "../shared/types";
 import { api } from "./api";
 import { VoiceClient } from "./voice";
 import { Gloss } from "./Gloss";
+import { transcriptBlocks } from "../shared/transcript";
+import { LearningLoop } from "./LearningLoop";
+import { ReplyHints } from "./ReplyHints";
 
 type View = "voice" | "writing" | "history" | "settings";
 const labels: Record<View, string> = {
@@ -67,35 +70,6 @@ function Icon({ name }: { name: string }) {
     </svg>
   );
 }
-function FeedbackView({ feedback }: { feedback: Feedback }) {
-  return (
-    <section className="feedback">
-      <h2>振り返り</h2>
-      <div className="natural">
-        <Gloss text={feedback.natural} annotations={feedback.annotations} />
-      </div>
-      <p className="preserve">
-        <Gloss text={feedback.explanation} annotations={feedback.annotations} />
-      </p>
-      {feedback.points.map((p, i) => (
-        <div className="feedback-point" key={i}>
-          <div className="original-example">{p.original}</div>
-          <div className="suggestion">
-            <Gloss text={p.suggestion} annotations={feedback.annotations} />
-          </div>
-          <p>
-            <Gloss text={p.reason} annotations={feedback.annotations} />
-          </p>
-        </div>
-      ))}
-      {feedback.nextFocus.length > 0 && (
-        <p className="next-focus">次に練習したいこと：{feedback.nextFocus.join("・")}</p>
-      )}
-      <small>下線のある語句に触れると、意味と正式形が見られます。</small>
-    </section>
-  );
-}
-
 function Caption({
   row,
   lessonId,
@@ -212,7 +186,10 @@ export default function App() {
     [connectedEvents, setConnectedEvents] = useState(false),
     [search, setSearch] = useState(""),
     [follow, setFollow] = useState(true),
-    [currentSeconds, setCurrentSeconds] = useState(0);
+    [currentSeconds, setCurrentSeconds] = useState(0),
+    [hintText, setHintText] = useState("");
+  const assisted = useRef(new Set<string>());
+  const helpRequests = useRef(new Map<string, Promise<unknown>>());
   const owner = useRef(crypto.randomUUID()),
     socket = useRef<WebSocket | null>(null),
     voiceClient = useRef<VoiceClient | null>(null),
@@ -237,12 +214,18 @@ export default function App() {
       setVoice(l);
     if (l.kind === "writing" && currentWriting.current?.id === l.id) setWriting(l);
   }
-  async function reviewVoice(id: string) {
+  async function reviewVoice(id: string, force = false) {
+    if (force) {
+      reviews.current.delete(id);
+      attempts.current.delete(id);
+    }
     if (reviews.current.has(id)) return reviews.current.get(id);
     const job = (async () => {
+      await helpRequests.current.get(id);
       const l = await api<Lesson>(`/lessons/${id}`);
       updateLesson(l);
-      if (!l.rows.length || l.attempts.length) return;
+      if (!l.rows.some((r) => r.role === "user") || (!force && (l.review || l.practice?.check)))
+        return;
       setBusy("review");
       const requestId = attempts.current.get(id) || crypto.randomUUID();
       attempts.current.set(id, requestId);
@@ -281,7 +264,7 @@ export default function App() {
         const u = event.event.usage as { seconds?: number };
         if (u?.seconds != null) setCurrentSeconds(u.seconds);
         void refresh();
-        void reviewVoice(event.lessonId);
+        if (currentVoice.current?.practice) void reviewVoice(event.lessonId);
       }
       if (event.event.type === "error") {
         const err = event.event.error as { message?: string };
@@ -390,6 +373,7 @@ export default function App() {
     }
   }
   async function newExercise(kind: "voice" | "writing") {
+    setHintText("");
     await perform("exercise", async () => {
       const l = await api<Lesson>("/lessons", { kind, direction, topic });
       if (kind === "voice") {
@@ -404,16 +388,29 @@ export default function App() {
       updateLesson(await api<Lesson>(`/lessons/${l.id}/exercise`, {}));
     });
   }
-  async function start() {
-    if (!voice || !audio.current) return;
+  async function start(selected = currentVoice.current) {
+    if (!audio.current) return;
     setNotice("");
     setConnecting(true);
     setCurrentSeconds(0);
+    setHintText("");
     const client = new VoiceClient(owner.current, audio.current);
     voiceClient.current = client;
     try {
+      let lesson = selected?.status === "draft" ? selected : null;
+      if (!lesson)
+        lesson = await api<Lesson>("/lessons", {
+          kind: "voice",
+          direction: "ja-id",
+          topic: "自由会話",
+        });
+      if (lesson.practice && !lesson.exercise)
+        lesson = await api<Lesson>(`/lessons/${lesson.id}/exercise`, {});
+      currentVoice.current = lesson;
+      setVoice(lesson);
+      setFollow(true);
       await client.start(
-        voice.id,
+        lesson.id,
         (event) => {
           if (socket.current?.readyState === WebSocket.OPEN)
             socket.current.send(JSON.stringify({ type: "live.event", event }));
@@ -427,22 +424,63 @@ export default function App() {
       await refresh();
     }
   }
+  function inspect(lesson: Lesson | null) {
+    setFollow(false);
+    if (lesson?.practice && !assisted.current.has(lesson.id)) {
+      assisted.current.add(lesson.id);
+      const request = api(`/lessons/${lesson.id}/assistance`, {});
+      helpRequests.current.set(lesson.id, request);
+      void request.catch(() => {
+        assisted.current.delete(lesson.id);
+        setNotice("ヒントの利用記録を保存できませんでした。確認前に再試行してください。");
+      });
+    }
+  }
+  async function beginPractice(
+    focus: PracticeFocus,
+    mode: "retry" | "transfer",
+    kind: "voice" | "writing",
+  ) {
+    await perform("exercise", async () => {
+      const l = await api<Lesson>("/practice", { focusId: focus.id, mode, kind });
+      setHintText("");
+      setView(kind);
+      if (kind === "voice") {
+        currentVoice.current = l;
+        setVoice(l);
+      } else {
+        currentWriting.current = l;
+        setWriting(l);
+      }
+      const ready = await api<Lesson>(`/lessons/${l.id}/exercise`, {});
+      updateLesson(ready);
+      if (kind === "voice") await start(ready);
+    });
+  }
+  async function showHint(lesson: Lesson) {
+    await perform("hint", async () => {
+      const result = await api<{ hint: string; lesson: Lesson }>(`/lessons/${lesson.id}/hint`, {});
+      setHintText(result.hint);
+      updateLesson(result.lesson);
+    });
+  }
   async function stop() {
     await perform("stop", async () => {
       await voiceClient.current?.stop();
       setConnecting(false);
       setMuted(false);
       await refresh();
-      if (voice) await reviewVoice(voice.id);
+      if (voice?.practice) await reviewVoice(voice.id);
     });
   }
-  async function evaluate() {
+  async function evaluate(force = false) {
     if (!writing) return;
     const l = writing,
       attemptKey = `${l.id}:${l.draft}`,
-      requestId = attempts.current.get(attemptKey) || crypto.randomUUID();
+      requestId = (!force && attempts.current.get(attemptKey)) || crypto.randomUUID();
     attempts.current.set(attemptKey, requestId);
     await perform("evaluate", async () => {
+      await helpRequests.current.get(l.id);
       updateLesson(await api<Lesson>(`/lessons/${l.id}/evaluate`, { requestId, answer: l.draft }));
     });
   }
@@ -454,6 +492,7 @@ export default function App() {
       }
       setVoice(l);
     } else setWriting(l);
+    setHintText("");
     setDirection(l.direction);
     setTopic(l.topic);
     setView(l.kind);
@@ -473,9 +512,11 @@ export default function App() {
     });
   }
   const connected = status?.chatgpt.connected;
+  const blocks = transcriptBlocks(voice?.rows || []);
+  const pendingFocus = history.map((l) => l.review?.focus).find((f) => f?.state === "transfer_due");
   return (
     <div className="app">
-      <aside className="sidebar">
+      <header className="app-header">
         <a
           className="brand"
           href="#"
@@ -484,12 +525,7 @@ export default function App() {
             setView("voice");
           }}
         >
-          <span className="brand-mark">b.</span>
-          <span>
-            Bahasa
-            <br />
-            <b>Coach</b>
-          </span>
+          Bahasa
         </a>
         <nav aria-label="練習の切り替え">
           {(["voice", "writing", "history"] as View[]).map((v) => (
@@ -499,68 +535,349 @@ export default function App() {
               onClick={() => {
                 setView(v);
                 setNotice("");
-                if (v === "history") void api<Lesson[]>("/lessons").then(setHistory);
+                if (v === "history")
+                  void api<Lesson[]>("/lessons")
+                    .then(setHistory)
+                    .catch((e) => setNotice(e.message));
               }}
             >
-              <Icon name={v} />
               {labels[v]}
-              {v === "voice" && running && <span className="live-dot" />}
             </button>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="connection-label">
-            <span className={connected ? "dot good" : "dot"} />
-            {connected ? "ChatGPT 接続済み" : "ChatGPT 未接続"}
-          </div>
-          <button
-            className={view === "settings" ? "nav active" : "nav"}
-            onClick={() => setView("settings")}
-          >
-            <Icon name="settings" />
-            接続設定
-          </button>
-          <p>
-            少しずつ、
-            <br />
-            自分の言葉に。
-          </p>
-        </div>
-      </aside>
-      <main>
-        <header className="page-header">
-          <div>
-            <h1>
-              {view === "voice" ? "話してみる" : view === "writing" ? "書いてみる" : labels[view]}
-            </h1>
-            <p>
-              {view === "voice"
-                ? "考えながらで大丈夫。字幕を見ながら、会話を続けよう。"
-                : view === "writing"
-                  ? "伝えたいことを、自然なインドネシア語に。"
-                  : view === "history"
-                    ? "前に練習したことが、次の会話につながる。"
-                    : "文章は ChatGPT Pro、音声は API で接続します。"}
-            </p>
-          </div>
-          <div className="monthly">
-            <span>今月の音声</span>
-            <strong>${voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}</strong>
-            <small>概算 USD{status?.voice.unconfirmed ? "・未確定分を含む" : ""}</small>
-          </div>
-        </header>
+        <button
+          className="settings-button"
+          aria-label="接続設定"
+          onClick={() => setView("settings")}
+        >
+          <Icon name="settings" />
+        </button>
+      </header>
+      <main className={view === "voice" ? "voice-main" : ""}>
         {notice && (
           <div role="alert" className="notice">
             <span>{notice}</span>
-            <button className="text-button" onClick={() => setNotice("")} aria-label="通知を閉じる">
-              閉じる
+            <button onClick={() => setNotice("")} aria-label="通知を閉じる">
+              ×
             </button>
           </div>
         )}
-        {((view === "voice" && voice && !voice.exercise) ||
+        {view === "voice" && (
+          <div className="voice-pane">
+            {voice?.exercise && (
+              <details className="scene" open={Boolean(voice.practice)}>
+                <summary>
+                  {voice.practice
+                    ? voice.practice.mode === "retry"
+                      ? "同じ意図を、もう一度"
+                      : "別の場面で使う"
+                    : voice.exercise.title}
+                </summary>
+                <p>{voice.exercise.prompt}</p>
+                {voice.practice && (
+                  <button
+                    className="text-button"
+                    disabled={Boolean(busy)}
+                    onClick={() => void showHint(voice)}
+                  >
+                    見本を見る
+                  </button>
+                )}
+                {hintText && (
+                  <p>
+                    <Gloss text={hintText} />
+                  </p>
+                )}
+              </details>
+            )}
+            <div
+              className="captions"
+              ref={captionArea}
+              role="log"
+              aria-label="会話の字幕"
+              aria-live="off"
+              onScroll={() => {
+                const el = captionArea.current;
+                if (el) setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 45);
+              }}
+            >
+              {blocks.length ? (
+                blocks.map((block) => (
+                  <article className={"caption-group " + block.role} key={block.id}>
+                    <span className="speaker">
+                      {block.role === "assistant" ? "コーチ" : "あなた"}
+                    </span>
+                    <p className="caption-text" dir="auto">
+                      <Gloss
+                        text={block.text}
+                        onOpen={() => setFollow(false)}
+                        onInspect={() => inspect(voice)}
+                      />
+                    </p>
+                    <details className="caption-tools">
+                      <summary>訂正</summary>
+                      <div className="source-rows">
+                        {block.rows.map((row) => (
+                          <Caption
+                            key={row.id}
+                            row={row}
+                            lessonId={voice!.id}
+                            onSaved={updateLesson}
+                            report={setNotice}
+                          />
+                        ))}
+                      </div>
+                    </details>
+                  </article>
+                ))
+              ) : (
+                <div className="voice-empty">
+                  <h1>話しましょう。</h1>
+                  <p>単語に触れると、意味を確認できます。</p>
+                  {!status?.voice.configured && (
+                    <button className="text-button" onClick={() => setView("settings")}>
+                      音声 API キーを設定する
+                    </button>
+                  )}
+                </div>
+              )}
+              {voice && !running && voice.rows.some((r) => r.role === "user") && (
+                <LearningLoop
+                  lesson={voice}
+                  busy={busy === "review" || busy === "exercise"}
+                  onPractice={(f, m) => void beginPractice(f, m, "voice")}
+                  onReview={() => void reviewVoice(voice.id, true)}
+                />
+              )}
+            </div>
+            {!follow && blocks.length > 0 && (
+              <button className="follow-button" onClick={() => setFollow(true)}>
+                最新の字幕へ
+              </button>
+            )}
+            {running && owns && voice && (
+              <ReplyHints key={voice.id} lesson={voice} onInspect={() => inspect(voice)} />
+            )}
+            <div className="voice-controls">
+              {running ? (
+                <>
+                  <button
+                    className="primary"
+                    disabled={(!owns && !connecting) || busy === "stop"}
+                    onClick={() => void stop()}
+                  >
+                    {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
+                  </button>
+                  <button
+                    className="quiet"
+                    disabled={!owns}
+                    onClick={() => {
+                      voiceClient.current?.mute(!muted);
+                      setMuted(!muted);
+                    }}
+                  >
+                    {muted ? "マイクを再開" : "マイクを停止"}
+                  </button>
+                  <span className="connection-state">
+                    {connecting ? "接続中…" : muted ? "マイク停止中" : "会話中"}
+                  </span>
+                </>
+              ) : (
+                <button
+                  className="primary talk-button"
+                  disabled={!status?.voice.configured || !connectedEvents || Boolean(busy)}
+                  onClick={() => void start()}
+                >
+                  <Icon name="voice" />
+                  {voice?.rows.length ? "新しく話す" : "話す"}
+                </button>
+              )}
+              <details className="more-controls">
+                <summary>その他</summary>
+                <div>
+                  {[
+                    ["repeat", "もう一度"],
+                    ["slow", "ゆっくり"],
+                    ["japanese", "日本語で説明"],
+                  ].map(([action, label]) => (
+                    <button
+                      key={action}
+                      disabled={!owns || active?.status !== "active"}
+                      onClick={() =>
+                        void api("/live/action", { owner: owner.current, action }).catch((e) =>
+                          setNotice(e.message),
+                        )
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() =>
+                      void audio.current
+                        ?.play()
+                        .catch(() => setNotice("会話を開始してから再生してください。"))
+                    }
+                  >
+                    音声を再生
+                  </button>
+                  <p>
+                    今回 ${voiceCost(currentSeconds).toFixed(2)} · 今月 $
+                    {voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}
+                    <br />
+                    <small>概算 USD{status?.voice.unconfirmed ? "・未確定分を含む" : ""}</small>
+                  </p>
+                </div>
+              </details>
+            </div>
+            <audio ref={audio} hidden aria-label="コーチの音声" />
+            {!running && (
+              <details className="optional-practice">
+                <summary>テーマを決めて練習する</summary>
+                <div className="exercise-toolbar">
+                  <label>
+                    テーマ
+                    <input list="topics" value={topic} onChange={(e) => setTopic(e.target.value)} />
+                  </label>
+                  <button
+                    disabled={Boolean(busy) || !connected}
+                    onClick={() => void newExercise("voice")}
+                  >
+                    {busy === "exercise" ? "準備中…" : "お題を作る"}
+                  </button>
+                </div>
+                {pendingFocus && (
+                  <button
+                    className="text-button"
+                    onClick={() => void beginPractice(pendingFocus, "transfer", "voice")}
+                  >
+                    前回の表現を、別の場面で使う
+                  </button>
+                )}
+              </details>
+            )}
+          </div>
+        )}
+        {view === "writing" && (
+          <section className="writing">
+            <div className="view-heading">
+              <h1>作文</h1>
+              <select
+                aria-label="翻訳の方向"
+                value={direction}
+                onChange={(e) => setDirection(e.target.value as Direction)}
+              >
+                <option value="ja-id">日本語 → インドネシア語</option>
+                <option value="id-ja">インドネシア語 → 日本語</option>
+              </select>
+            </div>
+            <div className="exercise-toolbar">
+              <label>
+                テーマ
+                <input list="topics" value={topic} onChange={(e) => setTopic(e.target.value)} />
+              </label>
+              <button
+                disabled={!connected || Boolean(busy)}
+                onClick={() => void newExercise("writing")}
+              >
+                {busy === "exercise" ? "準備中…" : "新しいお題"}
+              </button>
+            </div>
+            {!connected && (
+              <button className="text-button" onClick={() => setView("settings")}>
+                ChatGPT に接続する
+              </button>
+            )}
+            {writing?.exercise ? (
+              <>
+                <div className="writing-prompt">
+                  <Gloss
+                    text={writing.exercise.prompt}
+                    annotations={writing.exercise.annotations}
+                    onInspect={() => inspect(writing)}
+                  />
+                </div>
+                {writing.practice && (
+                  <div className="practice-instruction">
+                    <p>
+                      {writing.practice.mode === "retry"
+                        ? "同じ意図を、自分の言葉でもう一度。"
+                        : "前回の表現を、この場面で使ってみてください。"}
+                    </p>
+                    <button
+                      className="text-button"
+                      disabled={Boolean(busy)}
+                      onClick={() => void showHint(writing)}
+                    >
+                      見本を見る
+                    </button>
+                    {hintText && (
+                      <blockquote>
+                        <Gloss text={hintText} />
+                      </blockquote>
+                    )}
+                  </div>
+                )}
+                <label className="answer-label">
+                  あなたの回答
+                  <textarea
+                    className="answer"
+                    value={writing.draft}
+                    disabled={busy === "evaluate"}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      localStorage.setItem(
+                        `bahasa.draft.${writing.id}`,
+                        JSON.stringify({ text, updatedAt: Date.now() }),
+                      );
+                      setWriting({ ...writing, draft: text });
+                    }}
+                    placeholder={
+                      writing.direction === "ja-id" ? "インドネシア語で書く…" : "日本語で書く…"
+                    }
+                    rows={5}
+                  />
+                </label>
+                <div className="submit-row">
+                  <small role="status">{saved}</small>
+                  <button
+                    className="primary"
+                    disabled={!writing.draft.trim() || Boolean(busy) || !connected}
+                    onClick={() => void evaluate()}
+                  >
+                    {busy === "evaluate" ? "確認中…" : "回答を確認する"}
+                  </button>
+                </div>
+                {writing.attempts.length > 0 && (
+                  <LearningLoop
+                    lesson={writing}
+                    busy={Boolean(busy)}
+                    onPractice={(f, m) => void beginPractice(f, m, "writing")}
+                    onReview={() => void evaluate(true)}
+                  />
+                )}
+              </>
+            ) : (
+              <p className="empty-writing">お題を作って、短い文章から始めましょう。</p>
+            )}
+            {writing && writing.attempts.length > 1 && (
+              <details className="previous-attempts">
+                <summary>以前の回答</summary>
+                {writing.attempts.slice(1).map((a) => (
+                  <div key={a.id}>
+                    <p>
+                      <Gloss text={a.answer} />
+                    </p>
+                    <p className="muted">{a.feedback.explanation}</p>
+                  </div>
+                ))}
+              </details>
+            )}
+          </section>
+        )}
+        {((view === "voice" && voice?.practice && !voice.exercise) ||
           (view === "writing" && writing && !writing.exercise)) && (
-          <div className="setup-note">
-            <span>お題の作成が途中です。入力したテーマは保存されています。</span>
+          <div className="retry-exercise">
             <button
               disabled={Boolean(busy)}
               onClick={() => {
@@ -574,335 +891,43 @@ export default function App() {
             </button>
           </div>
         )}
-        {!connected && view !== "settings" && (
-          <div className="setup-note">
-            <span>はじめに ChatGPT を接続すると、出題と添削を使えます。</span>
-            <button className="text-button" onClick={() => setView("settings")}>
-              接続設定へ <Icon name="arrow" />
-            </button>
-          </div>
-        )}
-        {(view === "voice" || view === "writing") && (
-          <div className="exercise-toolbar">
-            <label>
-              練習するテーマ
-              <input
-                list="topics"
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="例：締め切りの延長を相談する"
-              />
-              <datalist id="topics">
-                {TOPICS.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
-            </label>
-            {view === "writing" && (
-              <label>
-                翻訳の方向
-                <select
-                  value={direction}
-                  onChange={(e) => setDirection(e.target.value as Direction)}
-                >
-                  <option value="ja-id">日本語 → インドネシア語</option>
-                  <option value="id-ja">インドネシア語 → 日本語</option>
-                </select>
-              </label>
-            )}
-            <button
-              className="primary"
-              disabled={Boolean(busy) || !connected || (view === "voice" && running)}
-              onClick={() => void newExercise(view as "voice" | "writing")}
-            >
-              {busy === "exercise" ? "お題を考えています…" : "お題を出してもらう"}
-              <Icon name="arrow" />
-            </button>
-          </div>
-        )}
-        {view === "voice" && (
-          <>
-            <div className="voice-layout">
-              <section className="conversation">
-                <div className="section-bar">
-                  <h2>会話の字幕</h2>
-                  <span className="status-pill">
-                    <span className={`dot ${running ? "good" : ""}`} />
-                    {connecting
-                      ? "接続中"
-                      : active?.status === "closing"
-                        ? "終了処理中"
-                        : running
-                          ? muted
-                            ? "マイク停止中"
-                            : "会話中"
-                          : "待機中"}
-                  </span>
-                </div>
-                <div
-                  className="captions"
-                  ref={captionArea}
-                  role="log"
-                  aria-label="会話の字幕"
-                  aria-live="off"
-                  onScroll={() => {
-                    const el = captionArea.current;
-                    if (el) setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 50);
-                  }}
-                >
-                  {voice?.rows.length ? (
-                    voice.rows.map((row) => (
-                      <Caption
-                        key={row.id}
-                        row={row}
-                        lessonId={voice.id}
-                        onSaved={updateLesson}
-                        report={setNotice}
-                      />
-                    ))
-                  ) : (
-                    <div className="empty-caption">
-                      <Icon name="voice" />
-                      <h3>ここに、二人の言葉が残ります。</h3>
-                      <p>
-                        お題を選んで会話を始めましょう。
-                        <br />
-                        わからない言葉は、日本語で聞いても大丈夫。
-                      </p>
-                      <div className="language-note">Indonesia · 日本語 · English · 中文</div>
-                    </div>
-                  )}
-                </div>
-                {!follow && (
-                  <button className="follow-button" onClick={() => setFollow(true)}>
-                    最新の字幕へ ↓
-                  </button>
-                )}
-                <div className="voice-controls">
-                  {!running ? (
-                    <button
-                      className="primary"
-                      disabled={
-                        !voice ||
-                        voice.status !== "draft" ||
-                        !connected ||
-                        !status?.voice.configured ||
-                        !connectedEvents ||
-                        Boolean(busy)
-                      }
-                      onClick={() => void start()}
-                    >
-                      <Icon name="voice" />
-                      会話を始める
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        className="stop"
-                        disabled={(!owns && !connecting) || busy === "stop"}
-                        onClick={() => void stop()}
-                      >
-                        {busy === "stop" ? "終了しています…" : "会話を終了"}
-                      </button>
-                      <button
-                        disabled={!owns}
-                        onClick={() => {
-                          voiceClient.current?.mute(!muted);
-                          setMuted(!muted);
-                        }}
-                      >
-                        {muted ? "マイクを再開" : "マイクを停止"}
-                      </button>
-                    </>
-                  )}
-                  <span className="session-cost">
-                    今回 ${voiceCost(currentSeconds).toFixed(2)} <small>概算</small>
-                  </span>
-                </div>
-                <audio
-                  ref={audio}
-                  controls
-                  className={running ? "audio-player" : "audio-player hidden"}
-                  aria-label="コーチの音声"
-                />
-                {!status?.voice.configured && (
-                  <p className="small-help">
-                    音声を使うには、接続設定で API キーを登録してください。
-                  </p>
-                )}
-              </section>
-              <aside className="lesson-margin">
-                <h2>今日の場面</h2>
-                {voice?.exercise ? (
-                  <>
-                    <h3>{voice.exercise.title}</h3>
-                    <p className="preserve">{voice.exercise.prompt}</p>
-                    <p className="hint">{voice.exercise.context}</p>
-                    <div className="focus-list">
-                      {voice.exercise.focus.map((f) => (
-                        <span key={f}>{f}</span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <p className="hint">
-                    あなたの練習履歴をもとに、仕事や日常で使える場面を提案します。
-                  </p>
-                )}
-                <div className="help-actions">
-                  <h3>会話の途中でも</h3>
-                  {[
-                    ["repeat", "もう一度言って"],
-                    ["slow", "ゆっくり話して"],
-                    ["japanese", "日本語で説明して"],
-                  ].map(([action, label]) => (
-                    <button
-                      key={action}
-                      disabled={!owns || active?.status !== "active"}
-                      onClick={() => {
-                        void api("/live/action", { owner: owner.current, action }).catch((e) =>
-                          setNotice(e.message),
-                        );
-                      }}
-                    >
-                      {label}
-                      <Icon name="arrow" />
-                    </button>
-                  ))}
-                </div>
-                <p className="small-help">字幕は自動保存されます。録音は残りません。</p>
-              </aside>
-            </div>
-            {busy === "review" && (
-              <p className="working" role="status">
-                会話を振り返っています…
-              </p>
-            )}
-            {voice?.attempts[0] && <FeedbackView feedback={voice.attempts[0].feedback} />}{" "}
-            {voice &&
-              voice.rows.length > 0 &&
-              !running &&
-              !voice.attempts.length &&
-              busy !== "review" && (
-                <button onClick={() => void reviewVoice(voice.id)}>振り返りを作成する</button>
-              )}
-          </>
-        )}
-        {view === "writing" && (
-          <div className="writing-layout">
-            <section className="writing-work">
-              <div className="section-bar">
-                <h2>{writing?.exercise?.title || "今日のお題"}</h2>
-                <span className="muted">
-                  {writing?.direction === "id-ja" ? "ID → JP" : "JP → ID"}
-                </span>
-              </div>
-              {writing?.exercise ? (
-                <>
-                  <p className="writing-prompt preserve">
-                    <Gloss
-                      text={writing.exercise.prompt}
-                      annotations={writing.exercise.annotations}
-                    />
-                  </p>
-                  <p className="hint">{writing.exercise.context}</p>
-                  <label className="answer-label">
-                    あなたの回答
-                    <textarea
-                      className="answer"
-                      value={writing.draft}
-                      disabled={busy === "evaluate"}
-                      onChange={(e) => {
-                        const text = e.target.value;
-                        localStorage.setItem(
-                          `bahasa.draft.${writing.id}`,
-                          JSON.stringify({ text, updatedAt: Date.now() }),
-                        );
-                        setWriting({ ...writing, draft: text });
-                      }}
-                      placeholder={
-                        writing.direction === "ja-id"
-                          ? "インドネシア語で書いてみましょう…"
-                          : "日本語で意味を書いてみましょう…"
-                      }
-                      rows={8}
-                    />
-                  </label>
-                  <div className="submit-row">
-                    <small role="status">{saved}</small>
-                    <button
-                      className="primary"
-                      disabled={!writing.draft.trim() || Boolean(busy) || !connected}
-                      onClick={() => void evaluate()}
-                    >
-                      {busy === "evaluate"
-                        ? "添削しています…"
-                        : writing.attempts.length
-                          ? "書き直した文章を添削"
-                          : "添削してもらう"}
-                      <Icon name="arrow" />
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="empty-writing">
-                  <Icon name="writing" />
-                  <h3>まずは、短い文章から。</h3>
-                  <p>
-                    お題を出してもらって、思いつく言葉で書いてみましょう。
-                    <br />
-                    下書きは自動で保存されます。
-                  </p>
-                </div>
-              )}
-            </section>
-            {writing?.attempts[0] ? (
-              <FeedbackView feedback={writing.attempts[0].feedback} />
-            ) : (
-              <aside className="lesson-margin">
-                <h2>自然な言い方を身につける</h2>
-                <p>
-                  意味が伝わるか、会話で自然か、相手に合った丁寧さか。３つの視点で振り返ります。
-                </p>
-                <p className="hint">添削の下線に触れると、その文での意味と正式な形が見られます。</p>
-              </aside>
-            )}
-          </div>
-        )}
-        {view === "writing" && writing && writing.attempts.length > 1 && (
-          <details className="previous-attempts">
-            <summary>以前の回答と添削（{writing.attempts.length - 1}回）</summary>
-            {writing.attempts.slice(1).map((attempt) => (
-              <section key={attempt.id}>
-                <p className="preserve">回答：{attempt.answer}</p>
-                <FeedbackView feedback={attempt.feedback} />
-              </section>
-            ))}
-          </details>
-        )}
         {view === "history" && (
           <section className="history">
-            <label className="search">
-              履歴を検索
-              <input
-                type="search"
-                placeholder="テーマや練習した言葉"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </label>
+            <div className="view-heading">
+              <h1>履歴</h1>
+            </div>
+            <input
+              aria-label="履歴を検索"
+              type="search"
+              placeholder="言葉やテーマで検索"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
             {history
               .filter((l) => JSON.stringify(l).toLowerCase().includes(search.toLowerCase()))
               .map((l) => (
                 <button className="history-row" key={l.id} onClick={() => openLesson(l)}>
-                  <Icon name={l.kind} />
                   <div>
+                    <span className="history-kind">
+                      {l.kind === "voice" ? "会話" : "作文"}
+                      {l.practice
+                        ? l.practice.mode === "retry"
+                          ? " · 言い直し"
+                          : " · 別の場面"
+                        : ""}
+                    </span>
                     <strong>{l.title}</strong>
-                    <p>
-                      {l.attempts[0]?.feedback.nextFocus.join("・") ||
-                        l.exercise?.prompt ||
-                        "お題の作成が途中です。開いて再試行できます。"}
-                    </p>
+                    {l.practice?.check && (
+                      <small>
+                        {l.practice.check.outcome === "pass"
+                          ? l.practice.check.assisted
+                            ? "ヒントを使って確認"
+                            : "回答を確認済み"
+                          : l.practice.check.outcome === "retry"
+                            ? "再練習中"
+                            : "確認が必要"}
+                      </small>
+                    )}
                   </div>
                   <time>
                     {new Date(l.createdAt).toLocaleDateString("ja-JP", {
@@ -910,69 +935,51 @@ export default function App() {
                       day: "numeric",
                     })}
                   </time>
-                  <Icon name="arrow" />
                 </button>
               ))}
-            {!history.length && (
-              <div className="empty-writing">
-                <h3>ここから、積み重ねていこう。</h3>
-                <p>会話や作文をすると、ここに練習の記録が残ります。</p>
-              </div>
-            )}
+            {!history.length && <p className="empty-writing">まだ練習の記録はありません。</p>}
           </section>
         )}
         {view === "settings" && (
-          <div className="settings">
+          <section className="settings">
+            <h1>接続設定</h1>
             <section>
-              <div className="section-bar">
-                <h2>文章の指導</h2>
-                <span className="status-pill">{connected ? "接続済み" : "未接続"}</span>
-              </div>
-              <h3>ChatGPT でサインイン</h3>
-              <p>出題・添削・字幕の補正に、サブスクリプションの利用枠を使います。</p>
+              <h2>ChatGPT</h2>
               {connected ? (
                 <>
-                  <p className="account">
-                    {status.chatgpt.email}
-                    <span>{status.chatgpt.plan}</span>
+                  <p>
+                    {status.chatgpt.email} · {status.chatgpt.plan}
                   </p>
                   <button
+                    disabled={Boolean(busy) || running}
                     onClick={() =>
                       void perform("logout", async () => {
                         await api("/auth/logout", {});
                         await refresh();
                       })
                     }
-                    disabled={Boolean(busy) || running}
                   >
-                    このアプリからサインアウト
+                    サインアウト
                   </button>
                 </>
               ) : (
                 <button className="primary" disabled={Boolean(busy)} onClick={() => void login()}>
-                  {status?.chatgpt.pending ? "サインイン画面を開き直す" : "ChatGPT に接続する"}
-                  <Icon name="arrow" />
+                  ChatGPT でサインイン
                 </button>
               )}
               {status?.chatgpt.pending && (
-                <p role="status" className="hint">
-                  ブラウザでサインインを完了すると、自動で接続されます。
-                </p>
+                <p role="status">ブラウザでサインインを完了してください。</p>
               )}
               {status?.chatgpt.error && <p className="error-text">{status.chatgpt.error}</p>}
-              <p className="small-help">
-                普段の Codex 利用と枠を共有します。文章 API への自動切替はありません。
+              <p className="muted">
+                単語の説明・返答のヒント・練習の確認に、Pro の利用枠を使います。
               </p>
             </section>
             <section>
-              <div className="section-bar">
-                <h2>音声の接続</h2>
-                <span className="status-pill">
-                  {status?.voice.configured ? "キー登録済み" : "未設定"}
-                </span>
-              </div>
-              <h3>GPT-Live-1 API キー</h3>
-              <p>音声は別料金です。現在の単価は $0.05／分。金額による利用制限はありません。</p>
+              <h2>音声 API</h2>
+              <p className="muted">
+                GPT-Live-1 · $0.05／分{status?.voice.configured ? " · キー登録済み" : ""}
+              </p>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -984,34 +991,29 @@ export default function App() {
                 }}
               >
                 <label>
-                  OpenAI プロジェクトの API キー
+                  OpenAI API キー
                   <input
                     type="password"
                     value={key}
                     onChange={(e) => setKey(e.target.value)}
                     autoComplete="off"
-                    placeholder={
-                      status?.voice.configured ? "変更する場合は新しいキーを入力" : "sk-…"
-                    }
+                    placeholder={status?.voice.configured ? "変更するときだけ入力" : "sk-…"}
                   />
                 </label>
-                <button
-                  className="primary"
-                  disabled={key.trim().length < 10 || Boolean(busy) || running}
-                >
-                  キーを保存
-                </button>
+                <button disabled={key.trim().length < 10 || Boolean(busy) || running}>保存</button>
               </form>
-              <p className="small-help">
-                キーはこの Mac
-                のサーバーに保存されます。会話は「会話を始める」を押したときだけ接続します。
+              <p className="muted">
+                今月の音声：${voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}（概算 USD）
+                {status?.voice.unconfirmed ? " 未確定分を含みます。" : ""}
               </p>
             </section>
-          </div>
+          </section>
         )}
-        <footer>
-          自然な口語を、少しずつ。<span>学習データはこの Mac に保存</span>
-        </footer>
+        <datalist id="topics">
+          {TOPICS.map((t) => (
+            <option key={t} value={t} />
+          ))}
+        </datalist>
       </main>
     </div>
   );

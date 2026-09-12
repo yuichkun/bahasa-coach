@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { LearningStore } from "./learning-store.ts";
+import { transcriptBlocks } from "../shared/transcript.ts";
 import type {
   Attempt,
   Direction,
@@ -15,6 +17,7 @@ import type {
 type Row = Record<string, any>;
 export class Store {
   db: DatabaseSync;
+  learning: LearningStore;
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
@@ -26,6 +29,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY AUTOINCREMENT, row_id TEXT NOT NULL REFERENCES transcript_rows(id), original TEXT NOT NULL, corrected TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS voice_usage(lesson_id TEXT PRIMARY KEY REFERENCES lessons(id), provider_id TEXT, seconds REAL NOT NULL DEFAULT 0, confirmed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
     `);
+    this.learning = new LearningStore(this);
+    this.learning.init();
   }
   create(kind: Kind, direction: Direction, topic: string) {
     const id = randomUUID(),
@@ -53,6 +58,8 @@ export class Store {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
       rows: this.rows(id),
+      review: this.learning.review(id),
+      practice: this.learning.practice(id),
       attempts: (
         this.db
           .prepare("SELECT * FROM attempts WHERE lesson_id=? ORDER BY created_at DESC, rowid DESC")
@@ -85,11 +92,15 @@ export class Store {
         prompt: l.exercise?.prompt,
         answer: l.attempts[0]?.answer,
         feedback: l.attempts[0]?.feedback,
-        conversation: l.rows.slice(-30).map((t) => ({
-          role: t.role,
-          text: t.corrected ?? t.original,
-          recognitionUncertain: t.revisionStale,
-        })),
+        practice: l.practice,
+        review: l.review,
+        conversation: transcriptBlocks(l.rows)
+          .slice(-15)
+          .map((t) => ({
+            role: t.role,
+            text: t.text,
+            recognitionUncertain: t.rows.some((r) => r.revisionStale),
+          })),
       };
     });
   }
@@ -119,8 +130,10 @@ export class Store {
     this.status(id, "completed");
     return this.get(id);
   }
-  attempt(id: string): Attempt | null {
-    const r = this.db.prepare("SELECT * FROM attempts WHERE id=?").get(id) as Row | undefined;
+  attempt(id: string, lessonId?: string): Attempt | null {
+    const r = this.db
+      .prepare("SELECT * FROM attempts WHERE id=? AND (? IS NULL OR lesson_id=?)")
+      .get(id, lessonId ?? null, lessonId ?? null) as Row | undefined;
     return r
       ? { id: r.id, answer: r.answer, feedback: JSON.parse(r.feedback), createdAt: r.created_at }
       : null;
@@ -220,6 +233,7 @@ export class Store {
     this.db
       .prepare("INSERT INTO revisions(row_id,original,corrected,created_at) VALUES(?,?,?,?)")
       .run(rowId, original, corrected, Date.now());
+    this.learning.invalidate(lessonId);
     return this.get(lessonId);
   }
   usageStart(id: string, providerId: string) {

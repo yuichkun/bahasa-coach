@@ -7,7 +7,7 @@ import type { AppStatus } from "../shared/types.ts";
 
 type Json = Record<string, any>;
 export interface TutorBackend {
-  requestJson(prompt: string, schema: Json): Promise<unknown>;
+  requestJson(prompt: string, schema: Json, options?: { interactive?: boolean }): Promise<unknown>;
   status(): Promise<AppStatus["chatgpt"]>;
   login(): Promise<{ authUrl: string }>;
   logout(): Promise<void>;
@@ -23,6 +23,7 @@ export class CodexBackend implements TutorBackend {
   >();
   private events = new EventEmitter();
   private queue: Promise<unknown> = Promise.resolve();
+  private lookupQueue: Promise<unknown> = Promise.resolve();
   private loginPending = false;
   private loginError: string | null = null;
   private dataDir: string;
@@ -174,9 +175,12 @@ export class CodexBackend implements TutorBackend {
     await this.rpc("account/logout", {});
     this.loginPending = false;
   }
-  requestJson(prompt: string, schema: Json): Promise<unknown> {
-    const task = this.queue.then(() => this.run(prompt, schema));
-    this.queue = task.catch(() => {});
+  requestJson(prompt: string, schema: Json, options?: { interactive?: boolean }): Promise<unknown> {
+    const task = (options?.interactive ? this.lookupQueue : this.queue).then(() =>
+      this.run(prompt, schema),
+    );
+    if (options?.interactive) this.lookupQueue = task.catch(() => {});
+    else this.queue = task.catch(() => {});
     return task;
   }
   private async run(prompt: string, schema: Json) {

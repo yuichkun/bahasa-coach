@@ -31,7 +31,9 @@ export class VoiceClient {
         this.audio.srcObject = event.streams[0] || new MediaStream([event.track]);
         void this.audio
           .play()
-          .catch(() => onFailure("音声の再生が止められました。下の再生ボタンを押してください。"));
+          .catch(() =>
+            onFailure("音声の再生が止められました。「その他」の「音声を再生」を押してください。"),
+          );
       });
       const channel = peer.createDataChannel("oai-events");
       this.channel = channel;

@@ -93,7 +93,9 @@ export class LiveManager {
               content: [
                 {
                   type: "input_text",
-                  text: `練習したい場面: ${lesson.exercise?.prompt || lesson.topic}\n練習する表現: ${lesson.exercise?.focus.join(", ") || ""}\nPlease begin this roleplay with a short greeting in Indonesian, then wait for me.`,
+                  text: lesson.exercise
+                    ? `練習したい場面: ${lesson.exercise.prompt}\n${lesson.practice ? "This is one focused output practice. Ask the learner to express the stated intention, then listen. Do not provide a model answer unless asked. The learner will press the check button when finished." : "Please begin this roleplay with one short question in Indonesian, then wait for me."}`
+                    : "Start a free conversation in Indonesian with one brief greeting and an open-ended question. There is no assigned exercise. Follow the topic I choose. Do not ask me to select a practice theme.",
                 },
               ],
             },

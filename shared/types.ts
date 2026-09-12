@@ -23,6 +23,30 @@ export const feedbackSchema = z.object({
   nextFocus: z.array(z.string()),
 });
 export const correctionSchema = z.object({ corrected: z.string(), explanation: z.string() });
+export const practiceCheckSchema = z.object({
+  outcome: z.enum(["pass", "retry", "uncertain"]),
+  evidence: z.string(),
+  explanation: z.string(),
+});
+export type PracticeCheck = z.infer<typeof practiceCheckSchema> & { assisted?: boolean };
+export const replyHintsSchema = z.object({
+  hints: z.array(z.object({ text: z.string(), intent: z.string() })).max(3),
+});
+export type ReplyHint = z.infer<typeof replyHintsSchema>["hints"][number];
+export interface PracticeFocus {
+  id: string;
+  sourceLessonId: string;
+  original: string;
+  suggestion: string;
+  reason: string;
+  state: "proposed" | "practicing" | "transfer_due" | "transferred" | "withdrawn";
+}
+export interface PracticeContext {
+  focus: PracticeFocus;
+  mode: "retry" | "transfer";
+  hintUsed: boolean;
+  check: PracticeCheck | null;
+}
 export type Annotation = z.infer<typeof annotationSchema>;
 export type Exercise = z.infer<typeof exerciseSchema>;
 export type Feedback = z.infer<typeof feedbackSchema>;
@@ -50,6 +74,11 @@ export interface Lesson {
   updatedAt: number;
   rows: TranscriptRow[];
   attempts: Attempt[];
+  review?: {
+    status: "ready" | "clear" | "uncertain" | "stale";
+    focus: PracticeFocus | null;
+  } | null;
+  practice?: PracticeContext | null;
 }
 export interface Attempt {
   id: string;

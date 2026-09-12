@@ -37,3 +37,7 @@ GPT-Live-1 voice API with interruption and both speakers' live captions. Codex A
 ## Accessibility & Inclusion
 
 Japanese UI, clear reading widths, keyboard-accessible annotations, visible focus, comfortable text sizes, reduced motion support.
+
+## Current learning flow
+
+Free voice conversation starts without an exercise. Provide contextual word lookup and up to three short reply examples. Review is opt-in for free conversation. Practice one grounded improvement, check a fresh learner answer, distinguish help use, then test in a different situation. No unsupported mastery scores.

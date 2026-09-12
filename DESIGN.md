@@ -1,5 +1,11 @@
 # Bahasa Coach interface
 
-The user-approved MVP brief is the visual authority: a simple desk tool with captions and learner writing as the primary content, not a promotional page. Operate mode. The grounded direction is a bilingual meeting notebook: quiet paper, editorial rules, a narrow navigation rail, large readable conversation lines, and a margin for explanations. This carries both sparse first-run states and dense study records. No decorative image generation or additional direction-selection workflow is needed for this explicitly scoped MVP.
+The user's current direction is a minimal, focused conversation surface. Use a single reading column, a neutral white background, restrained type and a small text navigation bar. No sidebar, hero copy, dashboard metrics, decorative cards, or repeated explanations.
 
-Palette: warm off-white canvas, white working surface, charcoal text, muted forest green action/focus color, subdued terracotta for errors. Use 1px rules, restrained corner radii, and no nested cards. Main text uses native Japanese system fonts for fast local operation; headings are sized for work, not a display hero. Use inline SVG icons in a consistent stroke. Captions take the main column; assistance lives in the margin. Writing uses the same reading width. Keyboard focus and term popovers must be fully usable without hover.
+Voice starts directly with one action. Optional topic exercises belong in a collapsed control. During conversation the visible content is the transcript, up to three short reply examples, and start/end/microphone controls. Less frequent controls and cost details stay in the action menu. The transcript uses paragraphs, not transport chunks. User text is slightly muted; coach text remains clear and readable.
+
+Every Latin-script word can be inspected. Word explanations open in one viewport-clamped portal so the transcript's scrolling container cannot clip them. Show loading and retry states; keep the reading position while a word is inspected.
+
+Learning happens after practice, intentionally: one quoted source expression, one proposed improvement and its reason, a fresh answer, an evidence-backed check, then a different situation. Support use is recorded. Do not show grades, generic praise, completion badges or unsupported mastery claims. Keep feedback and controls for later stages hidden until relevant.
+
+Visual verification must not use computer use or browser automation without the user's explicit request. Use source inspection and isolated DOM/unit tests.
