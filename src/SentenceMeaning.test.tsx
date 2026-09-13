@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { GlossProvider, clearGlossCache } from "./Gloss";
 import { CaptionText } from "./CaptionText";
 import { SentenceMeaning } from "./SentenceMeaning";
-import { clearTranslationCache, requestTranslation } from "./translation-cache";
+import { clearTranslationCache, requestTranslation, acquireTranslation } from "./translation-cache";
 import {
   translationKey,
   type TranslationContext,
@@ -110,11 +110,11 @@ it("debounces growing live captions and keeps a visible translation while follow
   );
   const view = render(caption("Dia datang"));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(900);
+    await vi.advanceTimersByTimeAsync(300);
   });
   view.rerender(caption("Dia datang besok."));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(100);
   });
   expect(fetch).not.toHaveBeenCalled();
   await act(async () => {
@@ -131,6 +131,9 @@ it("debounces growing live captions and keeps a visible translation while follow
     }),
   );
   expect(screen.getByText("明日来るよ。")).toBeTruthy();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000);
+  });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 it("preserves untranslated Japanese between Indonesian sentences", async () => {
@@ -222,9 +225,9 @@ it("restores a cached sentence without another request after reload", async () =
   const result = requestTranslation(r);
   await vi.advanceTimersByTimeAsync(50);
   await result;
-  const saved = localStorage.getItem("bahasa.sentences.v1")!;
+  const saved = localStorage.getItem("bahasa.sentences.v2")!;
   clearTranslationCache();
-  localStorage.setItem("bahasa.sentences.v1", saved);
+  localStorage.setItem("bahasa.sentences.v2", saved);
   expect(await requestTranslation(r)).toBe("明日来るよ。");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -248,4 +251,76 @@ it("does not discard translations requested by a long visible transcript", async
   );
   await vi.advanceTimersByTimeAsync(50);
   expect(await results).toHaveLength(28);
+});
+
+it("removes an unused queued translation before it is sent", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+    const { requests, precision } = JSON.parse(options!.body as string);
+    return new Response(
+      JSON.stringify({
+        entries: requests.map((r: TranslationRequest) => ({
+          key: translationKey(r, precision),
+          translation: "最新の訳",
+        })),
+      }),
+    );
+  });
+  const old = acquireTranslation({ sentence: "Dia da", ...context });
+  const cancelled = expect(old.promise).rejects.toThrow("取り消し");
+  old.release();
+  const latest = requestTranslation({ sentence: "Dia datang besok.", ...context });
+  await vi.advanceTimersByTimeAsync(25);
+  await cancelled;
+  expect(await latest).toBe("最新の訳");
+  const sent = JSON.parse(fetch.mock.calls[0][1]!.body as string).requests;
+  expect(sent.map((r: TranslationRequest) => r.sentence)).toEqual(["Dia datang besok."]);
+});
+it("starts fast translations without waiting for an older precise request and separates their caches", async () => {
+  const r: TranslationRequest = { sentence: "Dia datang besok.", ...context };
+  let finish!: (r: Response) => void;
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+    const { precision } = JSON.parse(options!.body as string);
+    if (precision === "precise")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return new Response(
+      JSON.stringify({ entries: [{ key: translationKey(r, "fast"), translation: "早い訳" }] }),
+    );
+  });
+  const precise = requestTranslation(r, "precise");
+  await vi.advanceTimersByTimeAsync(25);
+  const fast = requestTranslation(r, "fast");
+  await vi.advanceTimersByTimeAsync(25);
+  expect(await fast).toBe("早い訳");
+  finish(
+    new Response(
+      JSON.stringify({ entries: [{ key: translationKey(r, "precise"), translation: "丁寧な訳" }] }),
+    ),
+  );
+  expect(await precise).toBe("丁寧な訳");
+  expect(await requestTranslation(r, "fast")).toBe("早い訳");
+  expect(await requestTranslation(r, "precise")).toBe("丁寧な訳");
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+it("keeps finished captions when precision changes rather than requeueing the whole transcript", async () => {
+  const r: TranslationRequest = { sentence: "Dia datang besok.", ...context };
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        entries: [{ key: translationKey(r, "fast"), translation: "明日来るよ。" }],
+      }),
+    ),
+  );
+  const view = render(<SentenceMeaning request={r} precision="fast" />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25);
+  });
+  expect(screen.getByText("明日来るよ。")).toBeTruthy();
+  view.rerender(<SentenceMeaning request={r} precision="precise" />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500);
+  });
+  expect(screen.getByText("明日来るよ。")).toBeTruthy();
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

@@ -84,7 +84,12 @@ export class VoiceClient {
       throw e;
     }
   }
+  private silence() {
+    this.audio.pause();
+    for (const track of this.mic?.getAudioTracks() || []) track.enabled = false;
+  }
   async stop() {
+    this.silence();
     this.cancelled = true;
     try {
       await api("/live/stop", { owner: this.owner });
@@ -93,6 +98,7 @@ export class VoiceClient {
     }
   }
   async pause() {
+    this.silence();
     // Keep the channel alive until final usage is received, just like normal end.
     const lesson = await api("/live/pause", { owner: this.owner });
     this.cancelled = true;

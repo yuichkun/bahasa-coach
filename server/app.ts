@@ -10,6 +10,7 @@ import { CodexBackend, type TutorBackend } from "./codex.ts";
 import { Tutor } from "./tutor.ts";
 import { LiveManager } from "./live.ts";
 import { words, normalizeWord } from "../shared/glossary.ts";
+import { translationPrecisionSchema } from "../shared/translation-settings.ts";
 import { translationRequestSchema } from "../shared/translation.ts";
 
 export async function createApp(options: {
@@ -44,6 +45,7 @@ export async function createApp(options: {
     const u = store.monthUsage();
     return {
       chatgpt: await backend.status(),
+      translation: { precision: tutor.translator.precision },
       voice: {
         configured: Boolean(voiceKey),
         active: live.info(),
@@ -126,15 +128,25 @@ export async function createApp(options: {
   });
   app.get("/api/status", status);
   app.post("/api/translations", async (req) => {
-    const { requests } = z
-      .object({ requests: z.array(translationRequestSchema).min(1).max(8) })
+    const { requests, precision } = z
+      .object({
+        requests: z.array(translationRequestSchema).min(1).max(8),
+        precision: translationPrecisionSchema.optional(),
+      })
       .parse(req.body);
-    return { entries: await Promise.all(requests.map((r) => tutor.translator.translate(r))) };
+    return {
+      entries: await Promise.all(requests.map((r) => tutor.translator.translate(r, precision))),
+    };
   });
   app.post("/api/auth/login", () => backend.login());
   app.post("/api/auth/logout", async () => {
     await backend.logout();
     return { ok: true };
+  });
+  app.post("/api/settings/translation", (req) => {
+    const { precision } = z.object({ precision: translationPrecisionSchema }).parse(req.body);
+    tutor.translator.setPrecision(precision);
+    return { precision };
   });
   app.post("/api/settings/voice-key", async (req) => {
     if (live.info())

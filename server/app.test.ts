@@ -156,3 +156,23 @@ it("does not expose the removed coach-action endpoint", async () => {
   });
   expect(response.statusCode).toBe(404);
 });
+
+it("saves the translation precision setting without exposing model or effort selection", async () => {
+  const save = await context.app.inject({
+    method: "POST",
+    url: "/api/settings/translation",
+    headers,
+    payload: { precision: "precise" },
+  });
+  expect(save.json()).toEqual({ precision: "precise" });
+  const status = await context.app.inject({ method: "GET", url: "/api/status", headers });
+  expect(status.json().translation).toEqual({ precision: "precise" });
+  const invalid = await context.app.inject({
+    method: "POST",
+    url: "/api/settings/translation",
+    headers,
+    payload: { precision: "arbitrary-model" },
+  });
+  expect(invalid.statusCode).toBe(400);
+  expect(context.tutor.translator.precision).toBe("precise");
+});

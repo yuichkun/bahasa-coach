@@ -17,6 +17,8 @@ import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
 import { MicControl } from "./MicControl";
+import { TranslationSettings } from "./TranslationSettings";
+import { DEFAULT_TRANSLATION_PRECISION } from "../shared/translation-settings";
 import { CaptionText } from "./CaptionText";
 import { COACH_NAME, COACH_DESCRIPTION } from "../shared/coach";
 import { RecapPage } from "./RecapPage";
@@ -93,6 +95,7 @@ export default function App() {
     [saved, setSaved] = useState(""),
     [key, setKey] = useState(""),
     [connecting, setConnecting] = useState(false),
+    [stopUnconfirmed, setStopUnconfirmed] = useState(false),
     [connectedEvents, setConnectedEvents] = useState(false),
     [search, setSearch] = useState(""),
     [follow, setFollow] = useState(true),
@@ -215,6 +218,7 @@ export default function App() {
       }
       if (event.event.type === "session.closed" || event.event.type === "local.closed") {
         sessionLessonId.current = "";
+        setStopUnconfirmed(false);
         if (!event.event.paused) setAttachedVoiceId("");
         voiceClient.current?.cleanup();
         setConnecting(false);
@@ -384,6 +388,7 @@ export default function App() {
     if (!audio.current) return;
     setNotice("");
     setConnecting(true);
+    setStopUnconfirmed(false);
     setCurrentSeconds(selected?.status === "paused" ? selected.voiceSeconds || 0 : 0);
     if (selected?.status !== "paused") setHintText("");
     const client = new VoiceClient(owner.current, audio.current);
@@ -479,13 +484,21 @@ export default function App() {
   }
   async function pause() {
     await perform("pause", async () => {
-      const lesson = (await voiceClient.current?.pause()) as Lesson | undefined;
-      if (lesson) {
-        sessionLessonId.current = "";
-        updateLesson(lesson);
-        setCurrentSeconds(lesson.voiceSeconds || 0);
+      setStopUnconfirmed(false);
+      try {
+        const lesson = (await voiceClient.current?.pause()) as Lesson | undefined;
+        if (lesson) {
+          sessionLessonId.current = "";
+          updateLesson(lesson);
+          setCurrentSeconds(lesson.voiceSeconds || 0);
+        }
+        await refresh();
+      } catch (error) {
+        setStopUnconfirmed(true);
+        throw new Error(
+          `${(error as Error).message} 音声は止めましたが、接続終了は未確認です。マイクボタンで停止を再試行してください。`,
+        );
       }
-      await refresh();
     });
   }
   async function practiceRecap(section: number, point: number) {
@@ -652,6 +665,7 @@ export default function App() {
                       }}
                       prefetch={blockIndex >= blocks.length - 2}
                       streaming={running}
+                      precision={status?.translation?.precision || DEFAULT_TRANSLATION_PRECISION}
                       onOpen={() => setFollow(false)}
                       onInspect={() => inspect(voice)}
                     />
@@ -704,7 +718,8 @@ export default function App() {
                     {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
                   </button>
                   <MicControl
-                    muted={Boolean(paused)}
+                    muted={Boolean(paused) || stopUnconfirmed}
+                    stopUnconfirmed={stopUnconfirmed}
                     connecting={connecting}
                     stopping={busy === "pause"}
                     disabled={
@@ -994,6 +1009,19 @@ export default function App() {
                 単語の説明・返答のヒント・練習の確認に、Pro の利用枠を使います。
               </p>
             </section>
+            <TranslationSettings
+              value={status?.translation?.precision || DEFAULT_TRANSLATION_PRECISION}
+              disabled={Boolean(busy)}
+              onChange={(precision) =>
+                void perform("translation-setting", async () => {
+                  const value = await api<{ precision: typeof precision }>(
+                    "/settings/translation",
+                    { precision },
+                  );
+                  setStatus((prior) => (prior ? { ...prior, translation: value } : prior));
+                })
+              }
+            />
             <section>
               <h2>音声 API</h2>
               <p className="muted">

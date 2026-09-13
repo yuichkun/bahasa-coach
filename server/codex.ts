@@ -4,6 +4,11 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import type { AppStatus } from "../shared/types.ts";
+import {
+  DEFAULT_TRANSLATION_PRECISION,
+  type TranslationPrecision,
+} from "../shared/translation-settings.ts";
+import { selectTranslationModel, type AvailableModel } from "./model-policy.ts";
 
 type Json = Record<string, any>;
 export interface TutorBackend {
@@ -16,6 +21,7 @@ export interface TutorBackend {
       feedback?: boolean;
       recap?: boolean;
       translation?: boolean;
+      translationPrecision?: TranslationPrecision;
     },
   ): Promise<unknown>;
   status(): Promise<AppStatus["chatgpt"]>;
@@ -37,7 +43,8 @@ export class CodexBackend implements TutorBackend {
   private prefetchQueue: Promise<unknown> = Promise.resolve();
   private feedbackQueue: Promise<unknown> = Promise.resolve();
   private recapQueue: Promise<unknown> = Promise.resolve();
-  private translationQueue: Promise<unknown> = Promise.resolve();
+  private translationQueues = new Map<TranslationPrecision, Promise<unknown>>();
+  private catalog: { expires: number; promise: Promise<AvailableModel[]> } | null = null;
   private loginPending = false;
   private loginError: string | null = null;
   private dataDir: string;
@@ -116,6 +123,7 @@ export class CodexBackend implements TutorBackend {
         if (this.process !== child) return;
         this.process = null;
         this.ready = null;
+        this.catalog = null;
         const error = new Error(
           "Codex との接続が終了しました。Codex CLI を確認して再試行してください。",
         );
@@ -188,6 +196,30 @@ export class CodexBackend implements TutorBackend {
     await this.start();
     await this.rpc("account/logout", {});
     this.loginPending = false;
+    this.catalog = null;
+  }
+  async availableModels(): Promise<AvailableModel[]> {
+    await this.start();
+    if (this.catalog && this.catalog.expires > Date.now()) return this.catalog.promise;
+    const promise = (async () => {
+      const models: AvailableModel[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await this.rpc("model/list", {
+          limit: 100,
+          includeHidden: false,
+          ...(cursor ? { cursor } : {}),
+        });
+        models.push(...page.data);
+        cursor = page.nextCursor || undefined;
+      } while (cursor);
+      return models;
+    })();
+    this.catalog = { expires: Date.now() + 300_000, promise };
+    void promise.catch(() => {
+      if (this.catalog?.promise === promise) this.catalog = null;
+    });
+    return promise;
   }
   requestJson(
     prompt: string,
@@ -198,11 +230,13 @@ export class CodexBackend implements TutorBackend {
       feedback?: boolean;
       recap?: boolean;
       translation?: boolean;
+      translationPrecision?: TranslationPrecision;
     },
   ): Promise<unknown> {
+    const precision = options?.translationPrecision || DEFAULT_TRANSLATION_PRECISION;
     const task = (
       options?.translation
-        ? this.translationQueue
+        ? this.translationQueues.get(precision) || Promise.resolve()
         : options?.recap
           ? this.recapQueue
           : options?.feedback
@@ -212,8 +246,12 @@ export class CodexBackend implements TutorBackend {
               : options?.interactive
                 ? this.lookupQueue
                 : this.queue
-    ).then(() => this.run(prompt, schema));
-    if (options?.translation) this.translationQueue = task.catch(() => {});
+    ).then(() => this.run(prompt, schema, options?.translation ? precision : undefined));
+    if (options?.translation)
+      this.translationQueues.set(
+        precision,
+        task.catch(() => {}),
+      );
     else if (options?.recap) this.recapQueue = task.catch(() => {});
     else if (options?.feedback) this.feedbackQueue = task.catch(() => {});
     else if (options?.prefetch) this.prefetchQueue = task.catch(() => {});
@@ -221,7 +259,7 @@ export class CodexBackend implements TutorBackend {
     else this.queue = task.catch(() => {});
     return task;
   }
-  private async run(prompt: string, schema: Json) {
+  private async run(prompt: string, schema: Json, precision?: TranslationPrecision) {
     await this.start();
     const account = await this.status();
     if (!account.connected)
@@ -231,8 +269,9 @@ export class CodexBackend implements TutorBackend {
         ),
         { statusCode: 401 },
       );
-    const models = await this.rpc("model/list", { limit: 100, includeHidden: false });
-    const model = models.data.find((m: Json) => m.isDefault);
+    const models = await this.availableModels();
+    const selected = precision ? selectTranslationModel(models, precision) : null;
+    const model = selected?.model || models.find((m) => m.isDefault);
     if (!model)
       throw new Error("アカウントの既定モデルを取得できませんでした。再接続してください。");
     const thread = await this.rpc("thread/start", {
@@ -295,9 +334,11 @@ export class CodexBackend implements TutorBackend {
       }, 180_000);
       this.events.on("notification", receive);
       this.events.once("disconnected", fail);
-      const effort = model.supportedReasoningEfforts?.some((x: Json) => x.reasoningEffort === "low")
-        ? "low"
-        : model.defaultReasoningEffort;
+      const effort =
+        selected?.effort ||
+        (model.supportedReasoningEfforts?.some((x: Json) => x.reasoningEffort === "low")
+          ? "low"
+          : model.defaultReasoningEffort);
       void this.rpc("turn/start", {
         threadId,
         model: model.model,

@@ -47,3 +47,15 @@ it("does not replace a guided exercise with an invented personal opening", () =>
   store.exercise(lesson.id, exercise);
   expect(guide.prepare(lesson.id).story).toBeNull();
 });
+
+it("opens with a greeting and waiting, not the prepared personal anecdote", () => {
+  const lesson = store.create("voice", "ja-id", "自由会話");
+  const result = guide.prepare(lesson.id);
+  expect(result.opening).toContain("short relaxed greeting");
+  expect(result.opening).toContain("wait for the learner");
+  expect(result.opening).not.toContain(result.story!.event);
+  expect(result.instructions).toContain("not a request to tell the story now");
+  expect(result.instructions).toContain("one or two short sentences");
+  expect(result.instructions).toContain("do not fill it");
+  expect(result.instructions).toContain("ちょっと待って");
+});

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { GlossUpdate } from "./glossary.ts";
 import type { RecapState } from "./recap.ts";
+import type { TranslationPrecision } from "./translation-settings.ts";
 
 export const annotationSchema = z.object({
   term: z.string(),
@@ -114,6 +115,7 @@ export interface LiveInfo {
   baseSeconds?: number;
 }
 export interface AppStatus {
+  translation?: { precision: TranslationPrecision };
   chatgpt: {
     connected: boolean;
     email: string | null;

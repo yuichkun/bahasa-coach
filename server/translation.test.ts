@@ -98,3 +98,31 @@ it("restores contextual translations from SQLite after restart", async () => {
   store = new Store(":memory:");
   rmSync(dir, { recursive: true, force: true });
 });
+
+it("persists precision preferences and keeps results from different levels separate", async () => {
+  translator.setPrecision("precise");
+  translator.close();
+  translator = new Translator(store, backend);
+  expect(translator.precision).toBe("precise");
+  const seen: unknown[] = [];
+  backend.requestJson = async (
+    _prompt: string,
+    _schema?: unknown,
+    options?: { translationPrecision?: string },
+  ) => {
+    seen.push(options?.translationPrecision);
+    return {
+      entries: [
+        { id: "0", translation: options?.translationPrecision === "fast" ? "早い訳" : "丁寧な訳" },
+      ],
+    };
+  };
+  const a = translator.translate(request, "fast"),
+    b = translator.translate(request);
+  await vi.advanceTimersByTimeAsync(25);
+  expect((await a).translation).toBe("早い訳");
+  expect((await b).translation).toBe("丁寧な訳");
+  await translator.translate(request, "fast");
+  await translator.translate(request, "precise");
+  expect(seen).toEqual(["fast", "precise"]);
+});

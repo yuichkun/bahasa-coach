@@ -310,8 +310,9 @@ it("uses one stable microphone button to close the connection and reconnect with
   const mic = screen.getByRole("button", { name: "マイク" });
   await waitFor(() => expect((mic as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(mic);
-  await waitFor(() => expect(screen.getByText("接続を停止できませんでした。")).toBeTruthy());
-  expect(mic.getAttribute("aria-pressed")).toBe("true");
+  await waitFor(() => expect(screen.getByText(/接続を停止できませんでした。/)).toBeTruthy());
+  expect(mic.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByText("停止を再試行")).toBeTruthy();
   fireEvent.click(mic);
   await waitFor(() => expect(screen.getByText("マイク オフ")).toBeTruthy());
   expect(screen.getByRole("button", { name: "マイク" })).toBe(mic);

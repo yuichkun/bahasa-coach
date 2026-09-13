@@ -1,4 +1,8 @@
 import { sentenceRequest, translationSpans, type TranslationContext } from "../shared/translation";
+import {
+  DEFAULT_TRANSLATION_PRECISION,
+  type TranslationPrecision,
+} from "../shared/translation-settings";
 import { Gloss } from "./Gloss";
 import { SentenceMeaning } from "./SentenceMeaning";
 
@@ -7,6 +11,7 @@ export function CaptionText({
   context,
   streaming,
   prefetch,
+  precision = DEFAULT_TRANSLATION_PRECISION,
   onOpen,
   onInspect,
 }: {
@@ -14,6 +19,7 @@ export function CaptionText({
   context: TranslationContext;
   streaming: boolean;
   prefetch: boolean;
+  precision?: TranslationPrecision;
   onOpen: () => void;
   onInspect: () => void;
 }) {
@@ -42,7 +48,9 @@ export function CaptionText({
                 onInspect={onInspect}
               />
             </p>
-            {request && <SentenceMeaning request={request} streaming={streaming} />}
+            {request && (
+              <SentenceMeaning request={request} streaming={streaming} precision={precision} />
+            )}
           </div>
         );
       })}

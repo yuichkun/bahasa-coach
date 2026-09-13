@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  DEFAULT_TRANSLATION_PRECISION,
+  type TranslationPrecision,
+} from "./translation-settings.ts";
 
 const turnSchema = z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(1500) });
 export const translationRequestSchema = z.object({
@@ -49,14 +53,17 @@ export function sentenceRequest(
     after: after.slice(0, 3).map((t) => ({ role: t.role, text: t.text.slice(0, 1500) })),
   };
 }
-export function translationKey(request: TranslationRequest) {
+export function translationKey(
+  request: TranslationRequest,
+  precision: TranslationPrecision = DEFAULT_TRANSLATION_PRECISION,
+) {
   const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g, " ").trim();
   const turns = (items: TranslationTurn[]) =>
     items.map((t) => ({ role: t.role, text: clean(t.text) }));
   // Retain punctuation, case, speaker and surrounding context: questions and
   // pronoun referents must not share a cache entry just because words match.
   return (
-    "sentence-v1:" +
+    `sentence-v2:${precision}:` +
     JSON.stringify({
       sentence: clean(request.sentence),
       speaker: request.speaker,

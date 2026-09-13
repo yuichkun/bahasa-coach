@@ -5,12 +5,14 @@ export function MicControl({
   disabled,
   connecting,
   stopping = false,
+  stopUnconfirmed = false,
   onChange,
 }: {
   muted: boolean;
   disabled: boolean;
   connecting: boolean;
   stopping?: boolean;
+  stopUnconfirmed?: boolean;
   onChange: (muted: boolean) => void | Promise<void>;
 }) {
   const latest = useRef({ muted, disabled, onChange });
@@ -74,7 +76,7 @@ export function MicControl({
         aria-pressed={!muted}
         aria-keyshortcuts="M"
         aria-busy={connecting || stopping || waiting}
-        title={`${muted ? "マイクをオンにする" : "マイクをオフにする"} (M)`}
+        title={`${stopUnconfirmed ? "停止を再試行" : muted ? "マイクをオンにする" : "マイクをオフにする"} (M)`}
         data-muted={muted}
         onClick={toggle}
       >
@@ -101,7 +103,15 @@ export function MicControl({
         </svg>
       </button>
       <span className="mic-state" aria-live="polite">
-        {stopping ? "停止中…" : connecting ? "接続中…" : muted ? "マイク オフ" : "マイク オン"}
+        {stopping
+          ? "停止中…"
+          : connecting
+            ? "接続中…"
+            : stopUnconfirmed
+              ? "停止を再試行"
+              : muted
+                ? "マイク オフ"
+                : "マイク オン"}
       </span>
       <span className="mic-shortcut">
         <kbd>M</kbd> で切り替え

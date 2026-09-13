@@ -13,3 +13,7 @@ Microphone off closes the voice connection and stops ongoing voice charges. Micr
 Visual verification must not use computer use or browser automation without the user's explicit request. Use source inspection and isolated DOM/unit tests.
 
 The conversation partner is Rani, explicitly identified as fictional in the empty state. Her everyday life supplies topics; responses can be reactions and anecdotes without obligatory questions. Keep her background consistent across sessions and microphone reconnects. Her stories are never learner facts.
+
+Rani responds to greetings briefly and introduces anecdotes only after a natural conversational opening. Routine turns contain one short thought, then yield; silence is thinking time, not a prompt for more narration.
+
+The microphone control silences local playback and capture immediately, retaining the connection only while finalization runs. If closure is unconfirmed, the same control offers retry without resuming sound. Translation settings expose only three native radio choices: speed, balance, and precision. No model identifiers or reasoning jargon appear in the interface. Existing translated captions remain readable when preferences change.
