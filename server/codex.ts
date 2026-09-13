@@ -246,7 +246,13 @@ export class CodexBackend implements TutorBackend {
               : options?.interactive
                 ? this.lookupQueue
                 : this.queue
-    ).then(() => this.run(prompt, schema, options?.translation ? precision : undefined));
+    ).then(() =>
+      this.run(
+        prompt,
+        schema,
+        options?.translation ? precision : options?.prefetch ? "fast" : undefined,
+      ),
+    );
     if (options?.translation)
       this.translationQueues.set(
         precision,

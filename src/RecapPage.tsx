@@ -185,7 +185,7 @@ export function RecapPage({
                               .map((b) => (
                                 <p key={b.id}>
                                   <small>{b.role === "user" ? "あなた" : "コーチ"}</small>
-                                  <Gloss text={b.text} prefetch={false} />
+                                  <Gloss text={b.text} />
                                 </p>
                               ))}
                           </div>

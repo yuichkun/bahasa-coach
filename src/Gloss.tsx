@@ -6,12 +6,12 @@ import {
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import type { Annotation } from "../shared/types";
 import {
-  glossKey,
   wordContext,
   sentenceContexts,
   words,
@@ -20,7 +20,7 @@ import {
 } from "../shared/glossary";
 import {
   peekMeaning,
-  requestMeaning,
+  glossaryRevision,
   seedAnnotations,
   subscribeGlossary,
   warmGlossarySource,
@@ -28,7 +28,6 @@ import {
 export { clearGlossCache } from "./glossary-cache";
 
 type Selection = {
-  key: string;
   term: string;
   context: string;
   anchor: HTMLElement;
@@ -40,7 +39,7 @@ type Controller = {
   prefetch: boolean;
   selected: HTMLElement | null;
   tooltipId: string;
-  offer: (s: Selection, immediately?: boolean) => void;
+  offer: (s: Selection) => void;
   leave: () => void;
   close: () => void;
   keep: () => void;
@@ -56,14 +55,10 @@ export function GlossProvider({
   const tooltipId = useId(),
     [selection, setSelection] = useState<Selection | null>(null),
     [value, setValue] = useState<GlossValue | null>(null),
-    [error, setError] = useState(""),
-    [retry, setRetry] = useState(0),
     [position, setPosition] = useState({ left: 0, top: 0 });
-  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
-    closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     panel = useRef<HTMLDivElement>(null);
   const clearTimers = () => {
-    if (openTimer.current) clearTimeout(openTimer.current);
     if (closeTimer.current) clearTimeout(closeTimer.current);
   };
   const close = useCallback(() => {
@@ -73,21 +68,17 @@ export function GlossProvider({
   const keep = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
   };
-  const offer = (s: Selection, immediately = false) => {
+  const offer = (s: Selection) => {
+    const ready = s.annotation
+      ? { ...s.annotation, scope: "context" as const }
+      : peekMeaning(s.term, s.context);
+    if (!ready) return;
     clearTimers();
-    const show = () => {
-      s.onOpen?.();
-      setValue(
-        s.annotation ? { ...s.annotation, scope: "context" } : peekMeaning(s.term, s.context),
-      );
-      setError("");
-      setSelection(s);
-    };
-    if (immediately || s.annotation || peekMeaning(s.term, s.context)) show();
-    else openTimer.current = setTimeout(show, 180);
+    s.onOpen?.();
+    setValue(ready);
+    setSelection(s);
   };
   const leave = () => {
-    if (openTimer.current) clearTimeout(openTimer.current);
     closeTimer.current = setTimeout(close, 180);
   };
   useEffect(() => {
@@ -115,21 +106,12 @@ export function GlossProvider({
     else {
       const cached = peekMeaning(selection.term, selection.context);
       if (cached) receive(cached);
-      void requestMeaning(selection.term, selection.context)
-        .then(receive)
-        .catch(() => {
-          if (alive) setError("意味を取得できませんでした。");
-        });
     }
-    const stopWarm = prefetch
-      ? warmGlossarySource("hover:" + selection.key, selection.context)
-      : () => {};
     return () => {
       alive = false;
       unsubscribe();
-      stopWarm();
     };
-  }, [selection, retry, prefetch]);
+  }, [selection]);
   useEffect(() => {
     if (!selection) return;
     const place = () => {
@@ -184,7 +166,7 @@ export function GlossProvider({
       document.removeEventListener("mousedown", outside);
       document.removeEventListener("keydown", escape);
     };
-  }, [selection, value, error, close, tooltipId]);
+  }, [selection, value, close, tooltipId]);
   useEffect(() => () => clearTimers(), []);
   return (
     <Context.Provider
@@ -200,6 +182,7 @@ export function GlossProvider({
     >
       {children}
       {selection &&
+        value &&
         createPortal(
           <div
             ref={panel}
@@ -218,35 +201,14 @@ export function GlossProvider({
               </button>
             </div>
             {value?.scope === "general" && <small className="word-scope">基本の意味</small>}
-            {value ? (
-              <>
-                <p>{value.meaning}</p>
-                {value.formal && (
-                  <div className="word-formal">
-                    <span>正式形</span>
-                    {value.formal}
-                  </div>
-                )}
-                {value.note && <small>{value.note}</small>}
-              </>
-            ) : error ? (
-              <>
-                <p role="alert">{error}</p>
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setError("");
-                    setRetry((n) => n + 1);
-                  }}
-                >
-                  再試行
-                </button>
-              </>
-            ) : (
-              <p role="status" className="muted">
-                意味を調べています…
-              </p>
+            <p>{value.meaning}</p>
+            {value.formal && (
+              <div className="word-formal">
+                <span>正式形</span>
+                {value.formal}
+              </div>
             )}
+            {value.note && <small>{value.note}</small>}
           </div>,
           document.body,
         )}
@@ -275,13 +237,33 @@ export function Gloss({
 }) {
   const controller = useContext(Context);
   const sourceId = useId();
+  const content = useRef<HTMLSpanElement>(null);
+  useSyncExternalStore(subscribeGlossary, glossaryRevision, () => 0);
   const annotationKey = JSON.stringify(annotations);
   useEffect(() => {
     seedAnnotations(text, JSON.parse(annotationKey));
   }, [text, annotationKey]);
   const shouldWarm = prefetch && Boolean(controller?.prefetch);
   useEffect(() => {
-    if (shouldWarm) return warmGlossarySource(sourceId, text, streaming);
+    if (!shouldWarm) return;
+    if (typeof IntersectionObserver === "undefined")
+      return warmGlossarySource(sourceId, text, streaming);
+    let stop: (() => void) | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) stop ??= warmGlossarySource(sourceId, text, streaming);
+        else {
+          stop?.();
+          stop = undefined;
+        }
+      },
+      { root: content.current?.closest(".captions") ?? null, rootMargin: "400px" },
+    );
+    if (content.current) observer.observe(content.current);
+    return () => {
+      observer.disconnect();
+      stop?.();
+    };
   }, [sourceId, text, streaming, shouldWarm]);
   const spans = sentenceContexts(text);
   const occurrences = new Map<string, number>();
@@ -289,7 +271,7 @@ export function Gloss({
     occurrences.set(normalizeWord(w.term), (occurrences.get(normalizeWord(w.term)) || 0) + 1);
   const lookup = new Map(
     annotations
-      .filter((a) => (occurrences.get(normalizeWord(a.term)) || 0) === 1)
+      .filter((a) => a.meaning.trim() && (occurrences.get(normalizeWord(a.term)) || 0) === 1)
       .filter((a) => /^[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*$/u.test(a.term))
       .map((a) => [a.term.toLocaleLowerCase("id"), a]),
   );
@@ -317,19 +299,22 @@ export function Gloss({
     if (index > cursor)
       result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor, index), cursor)}</span>);
     const context = wordContext(text, index, spans);
-    const open = (anchor: HTMLElement, immediately = false) => {
-      controller?.offer(
-        {
-          key: glossKey(term, context),
-          term,
-          context,
-          anchor,
-          annotation: lookup.get(term.toLocaleLowerCase("id")),
-          onInspect,
-          onOpen,
-        },
-        immediately,
-      );
+    const annotation = lookup.get(term.toLocaleLowerCase("id"));
+    const ready = annotation || peekMeaning(term, context);
+    if (!ready) {
+      result.push(<span key={`word-${index}`}>{paint(term, index)}</span>);
+      cursor = index + term.length;
+      continue;
+    }
+    const open = (anchor: HTMLElement) => {
+      controller?.offer({
+        term,
+        context,
+        anchor,
+        annotation,
+        onInspect,
+        onOpen,
+      });
     };
     result.push(
       <button
@@ -339,12 +324,12 @@ export function Gloss({
         aria-haspopup="dialog"
         onMouseEnter={(e) => open(e.currentTarget)}
         onMouseLeave={() => controller?.leave()}
-        onFocus={(e) => open(e.currentTarget, true)}
+        onFocus={(e) => open(e.currentTarget)}
         onBlur={(e) => {
           if (!(e.relatedTarget as HTMLElement | null)?.closest(".word-popover"))
             controller?.leave();
         }}
-        onClick={(e) => open(e.currentTarget, true)}
+        onClick={(e) => open(e.currentTarget)}
       >
         {paint(term, index)}
       </button>,
@@ -353,5 +338,5 @@ export function Gloss({
   }
   if (cursor < text.length)
     result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor), cursor)}</span>);
-  return <>{result}</>;
+  return <span ref={content}>{result}</span>;
 }

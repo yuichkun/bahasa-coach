@@ -17,11 +17,12 @@ const contexts = new Map<string, GlossEntry>(),
   vocabulary = new Map<string, Annotation>(),
   pending = new Map<string, number>(),
   failures = new Map<string, number>(),
-  foreground = new Map<string, Promise<GlossValue>>(),
   listeners = new Set<() => void>();
 const sources = new Map<string, { text: string; streaming: boolean; changed: number }>();
 const STORAGE = "bahasa.glossary.v2";
-let hydrated = false,
+let revision = 0,
+  epoch = 0,
+  hydrated = false,
   saveTimer: ReturnType<typeof setTimeout> | null = null,
   warmTimer: ReturnType<typeof setTimeout> | null = null,
   preparing = false;
@@ -31,7 +32,8 @@ function valid(a: unknown): a is Annotation {
     typeof a === "object" &&
     ["term", "meaning", "formal", "note"].every(
       (k) => typeof (a as Record<string, unknown>)[k] === "string",
-    ),
+    ) &&
+    String((a as Record<string, unknown>).meaning).trim(),
   );
 }
 function hydrate() {
@@ -67,7 +69,11 @@ function save() {
     } catch {}
   }, 200);
 }
+export function glossaryRevision() {
+  return revision;
+}
 function notify() {
+  revision++;
   listeners.forEach((fn) => fn());
 }
 export function subscribeGlossary(fn: () => void) {
@@ -145,12 +151,14 @@ function scheduleWarm(delay = 120) {
   }, delay);
 }
 async function prepare(requests: GlossRequest[]) {
-  const now = Date.now();
+  const now = Date.now(),
+    generation = epoch;
   requests.forEach((r) => pending.set(glossKey(r.term, r.context), now + 30_000));
   try {
     const result = await api<GlossUpdate>("/glossary/prepare", { requests });
-    ingestGlossary(result);
+    if (generation === epoch) ingestGlossary(result);
   } catch {
+    if (generation !== epoch) return;
     requests.forEach((r) => {
       const key = glossKey(r.term, r.context);
       pending.delete(key);
@@ -158,43 +166,75 @@ async function prepare(requests: GlossRequest[]) {
     });
   }
 }
+function nextRetryDelay() {
+  const now = Date.now();
+  const times = [...pending.values(), ...failures.values()].filter((time) => time > now);
+  return times.length ? Math.max(50, Math.min(...times) - now) : Infinity;
+}
 async function flushWarm() {
-  if (preparing) return;
-  const active = [...pending.values()].filter((time) => time > Date.now()).length;
-  if (active >= 36) return;
-  const requests = new Map<string, GlossRequest>();
-  let idleWait = Infinity;
-  for (const source of [...sources.values()].reverse()) {
-    const idle = Date.now() - source.changed;
-    for (const span of sentenceContexts(source.text)) {
-      if (source.streaming && !span.complete && idle < 800) {
-        idleWait = Math.min(idleWait, 800 - idle);
-        continue;
-      }
-      for (const word of words(span.text)) {
-        const request = {
-          term: word.term,
-          context: selectionContext(span.text, word.term, word.index),
-        };
-        if (needs(request)) requests.set(glossKey(word.term, span.text), request);
-        if (requests.size >= 36 - active) break;
-      }
-      if (requests.size >= 36 - active) break;
-    }
-    if (requests.size >= 36 - active) break;
-  }
-  if (!requests.size) {
-    if (Number.isFinite(idleWait)) scheduleWarm(Math.max(100, idleWait));
+  if (preparing || !sources.size) return;
+  const now = Date.now();
+  const active = [...pending.values()].filter((time) => time > now).length;
+  if (active >= 36) {
+    scheduleWarm(nextRetryDelay());
     return;
   }
+  const requests = new Map<string, GlossRequest>();
+  let nextWake = nextRetryDelay();
+  for (const source of [...sources.values()].reverse()) {
+    const idle = now - source.changed;
+    for (const span of sentenceContexts(source.text)) {
+      const partial = source.streaming && !span.complete;
+      let context = span.text;
+      if (partial && idle < 350) {
+        // The trailing token may still be arriving. Earlier whole words can be prepared now.
+        const lastWord = words(context).at(-1);
+        if (lastWord) context = context.slice(0, lastWord.index).trim();
+        nextWake = Math.min(nextWake, 350 - idle);
+      }
+      for (const word of words(context)) {
+        const request = {
+          term: word.term,
+          context: selectionContext(context, word.term, word.index),
+        };
+        if (partial) {
+          // General definitions are reusable while a sentence is growing. Resolve its
+          // specific senses once complete, without looking up every evolving prefix.
+          const prefix = normalizeWord(word.term) + "\n";
+          if (
+            peekMeaning(word.term, request.context) ||
+            [...pending, ...failures].some(
+              ([key, until]) => key.startsWith(prefix) && until > now,
+            ) ||
+            [...requests.keys()].some((key) => key.startsWith(prefix))
+          )
+            continue;
+        }
+        if (needs(request)) requests.set(glossKey(word.term, request.context), request);
+      }
+    }
+  }
+  if (!requests.size) {
+    if (Number.isFinite(nextWake)) scheduleWarm(Math.max(50, nextWake));
+    return;
+  }
+  const generation = epoch;
   preparing = true;
   try {
-    await prepare([...requests.values()]);
+    const prioritized = [...requests.values()].sort(
+      (a, b) =>
+        Number(Boolean(peekMeaning(a.term, a.context))) -
+        Number(Boolean(peekMeaning(b.term, b.context))),
+    );
+    await prepare(prioritized.slice(0, 36 - active));
   } finally {
-    preparing = false;
-    scheduleWarm();
+    if (generation === epoch) {
+      preparing = false;
+      scheduleWarm();
+    }
   }
 }
+
 export function warmGlossarySource(id: string, text: string, streaming = false) {
   hydrate();
   sources.delete(id);
@@ -220,31 +260,13 @@ export function resumeGlossaryPrefetch() {
   pending.clear();
   scheduleWarm();
 }
-export async function requestMeaning(term: string, context: string): Promise<GlossValue> {
-  hydrate();
-  const key = glossKey(term, context),
-    ready = peekMeaning(term, context);
-  if (ready) {
-    if (ready.scope === "general" && needs({ term, context })) void prepare([{ term, context }]);
-    return ready;
-  }
-  const existing = foreground.get(key);
-  if (existing) return existing;
-  const promise = api<Annotation>("/lookup", { term, context })
-    .then((annotation) => {
-      ingestGlossary({ entries: [{ term, context, annotation }], vocabulary: [] });
-      return { ...annotation, scope: "context" as const };
-    })
-    .finally(() => foreground.delete(key));
-  foreground.set(key, promise);
-  return promise;
-}
 export function clearGlossCache(preserveStorage = false) {
   contexts.clear();
   vocabulary.clear();
   pending.clear();
   failures.clear();
-  foreground.clear();
+  epoch++;
+  preparing = false;
   sources.clear();
   hydrated = false;
   if (saveTimer) clearTimeout(saveTimer);
@@ -255,4 +277,5 @@ export function clearGlossCache(preserveStorage = false) {
     try {
       localStorage.removeItem(STORAGE);
     } catch {}
+  notify();
 }

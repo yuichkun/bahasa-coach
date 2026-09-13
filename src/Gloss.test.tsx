@@ -19,9 +19,9 @@ describe("contextual annotations", () => {
         annotations={[{ term: "lagi", meaning: "今〜している", formal: "sedang", note: "口語" }]}
       />,
     );
-    expect(html.match(/class="term"/g)).toHaveLength(5);
+    expect(html.match(/class="term"/g)).toHaveLength(2);
     expect(html).toMatch(/>lagi<\/button>/);
-    expect(html).toMatch(/>lagipula<\/button>/);
+    expect(html).toMatch(/>lagipula<\/span>/);
   });
   it("renders learner markup as text rather than HTML", () => {
     const html = renderToStaticMarkup(<Gloss text={"<img src=x onerror=alert(1)>"} />);

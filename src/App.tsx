@@ -663,7 +663,7 @@ export default function App() {
                           .slice(blockIndex + 1, blockIndex + 3)
                           .map((b) => ({ role: b.role, text: b.text })),
                       }}
-                      prefetch={blockIndex >= blocks.length - 2}
+                      prefetch={true}
                       streaming={running}
                       precision={status?.translation?.precision || DEFAULT_TRANSLATION_PRECISION}
                       onOpen={() => setFollow(false)}
@@ -900,7 +900,7 @@ export default function App() {
                 {writing.attempts.slice(1).map((a) => (
                   <div key={a.id}>
                     <p>
-                      <Gloss text={a.answer} prefetch={false} />
+                      <Gloss text={a.answer} />
                     </p>
                     <p className="muted">{a.feedback.explanation}</p>
                   </div>

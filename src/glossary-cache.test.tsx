@@ -3,19 +3,17 @@ import React, { act } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Gloss, GlossProvider } from "./Gloss";
-import {
-  clearGlossCache,
-  ingestGlossary,
-  peekMeaning,
-  requestMeaning,
-  warmGlossarySource,
-} from "./glossary-cache";
+import { clearGlossCache, ingestGlossary, peekMeaning, warmGlossarySource } from "./glossary-cache";
 import { wordContext } from "../shared/glossary";
-beforeEach(() => clearGlossCache());
+beforeEach(() => {
+  clearGlossCache();
+  vi.stubGlobal("IntersectionObserver", undefined);
+});
 afterEach(() => {
   cleanup();
   clearGlossCache();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 describe("instant dictionary display", () => {
@@ -25,10 +23,10 @@ describe("instant dictionary display", () => {
       entries: [],
       vocabulary: [{ term: "rapat", meaning: "会議／密接な", formal: "rapat", note: "" }],
     });
-    const result = await requestMeaning("rapat", "Ada rapat nanti.");
-    expect(result.scope).toBe("general");
-    expect(result.meaning).toContain("会議");
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    const result = peekMeaning("rapat", "Ada rapat nanti.");
+    expect(result?.scope).toBe("general");
+    expect(result?.meaning).toContain("会議");
+    expect(fetcher).not.toHaveBeenCalled();
   });
   it("shows basic frequent-word meanings without any fetch on hover", () => {
     const fetcher = vi.spyOn(globalThis, "fetch");
@@ -91,7 +89,7 @@ describe("instant dictionary display", () => {
     });
     const fetcher = vi.spyOn(globalThis, "fetch");
     const extended = text + " Besok kita mulai lagi.";
-    expect((await requestMeaning("rapat", wordContext(extended, 13))).meaning).toBe("会議");
+    expect(peekMeaning("rapat", wordContext(extended, 13))?.meaning).toBe("会議");
     expect(fetcher).not.toHaveBeenCalled();
   });
   it("restores browser cache across reload without requiring a server or model", async () => {
@@ -110,7 +108,7 @@ describe("instant dictionary display", () => {
     await vi.advanceTimersByTimeAsync(250);
     clearGlossCache(true);
     const fetcher = vi.spyOn(globalThis, "fetch");
-    expect((await requestMeaning("jadwal", context)).meaning).toBe("予定");
+    expect(peekMeaning("jadwal", context)?.meaning).toBe("予定");
     expect(peekMeaning("jadwal", "Apa jadwalmu?")?.scope).toBe("general");
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -129,7 +127,7 @@ describe("instant dictionary display", () => {
     expect(value?.scope).toBe("general");
     expect(value?.meaning).toContain("毒");
   });
-  it("coalesces continuous partial speech and prefetches the completed sentence", async () => {
+  it("prepares whole words while speech is still arriving, omitting its incomplete trailing word", async () => {
     vi.useFakeTimers();
     const fetcher = vi
       .spyOn(globalThis, "fetch")
@@ -142,14 +140,65 @@ describe("instant dictionary display", () => {
         await vi.advanceTimersByTimeAsync(100);
       });
     }
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const earlyBody = fetcher.mock.calls[0][1]?.body;
+    const early = JSON.parse(typeof earlyBody === "string" ? earlyBody : "");
+    expect(early.requests.map((r: { term: string }) => r.term)).toEqual(["Menunda"]);
     warmGlossarySource("live", "Menunda rapat.", true);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(50);
     });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    const body = fetcher.mock.calls[0][1]?.body;
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const body = fetcher.mock.calls[1][1]?.body;
     const sent = JSON.parse(typeof body === "string" ? body : "");
     expect(sent.requests.map((r: { term: string }) => r.term)).toEqual(["Menunda", "rapat"]);
   });
+});
+
+it("prepares both senses of the same word occurrence before any hover", async () => {
+  vi.useFakeTimers();
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify({ entries: [], vocabulary: [] })));
+  warmGlossarySource("senses", "Bisa itu bisa membunuh.");
+  await vi.advanceTimersByTimeAsync(50);
+  const body = fetcher.mock.calls[0][1]?.body;
+  const requests = JSON.parse(typeof body === "string" ? body : "").requests;
+  expect(
+    requests
+      .filter((r: { term: string }) => r.term.toLowerCase() === "bisa")
+      .map((r: { context: string }) => r.context),
+  ).toEqual(["⟦Bisa⟧ itu bisa membunuh.", "Bisa itu ⟦bisa⟧ membunuh."]);
+});
+it("recovers missing push results after their lease expires without another interaction", async () => {
+  vi.useFakeTimers();
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify({ entries: [], vocabulary: [] })));
+  ingestGlossary({
+    entries: [],
+    vocabulary: [],
+    pending: Array.from({ length: 36 }, (_, i) => `waiting${i}\ncontext`),
+  });
+  warmGlossarySource("visible", "Menunda rapat.");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(fetcher).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it("prioritizes unseen vocabulary before refining cached dictionary senses", async () => {
+  vi.useFakeTimers();
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify({ entries: [], vocabulary: [] })));
+  ingestGlossary({
+    entries: [],
+    vocabulary: [{ term: "rapat", meaning: "会議／密接な", formal: "rapat", note: "" }],
+  });
+  warmGlossarySource("visible", "Rapat menunda.");
+  await vi.advanceTimersByTimeAsync(50);
+  const body = fetcher.mock.calls[0][1]?.body;
+  expect(
+    JSON.parse(typeof body === "string" ? body : "").requests.map((r: { term: string }) => r.term),
+  ).toEqual(["menunda", "Rapat"]);
 });

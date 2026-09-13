@@ -497,6 +497,9 @@ main {
   text-align: inherit;
   background: none;
   cursor: help;
+  text-decoration: underline dotted #7c8c80;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
   transition: background 0.1s;
 }
 .term:hover,
