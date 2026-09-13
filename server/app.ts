@@ -9,6 +9,7 @@ import { Store } from "./store.ts";
 import { CodexBackend, type TutorBackend } from "./codex.ts";
 import { Tutor } from "./tutor.ts";
 import { LiveManager } from "./live.ts";
+import { words, normalizeWord } from "../shared/glossary.ts";
 
 export async function createApp(options: {
   dataDir: string;
@@ -33,6 +34,7 @@ export async function createApp(options: {
       if (socket.readyState === 1) socket.send(JSON.stringify(event));
   };
   const live = new LiveManager(store, tutor, () => voiceKey, emit);
+  tutor.glossary.onReady = (update) => emit({ type: "glossary", ...update });
   const status = async (): Promise<AppStatus> => {
     const u = store.monthUsage();
     return {
@@ -146,6 +148,24 @@ export async function createApp(options: {
     )
       throw Object.assign(new Error("本文内の単語を選んでください。"), { statusCode: 400 });
     return tutor.lookup(term, context);
+  });
+  app.post("/api/glossary/prepare", (req) => {
+    const { requests } = z
+      .object({
+        requests: z
+          .array(
+            z.object({ term: z.string().min(1).max(100), context: z.string().min(1).max(1500) }),
+          )
+          .max(40),
+      })
+      .parse(req.body);
+    if (
+      requests.some(
+        (r) => !words(r.context).some((w) => normalizeWord(w.term) === normalizeWord(r.term)),
+      )
+    )
+      throw Object.assign(new Error("本文内の単語を選んでください。"), { statusCode: 400 });
+    return tutor.glossary.prepare(requests);
   });
   app.post("/api/practice", (req) => {
     const { focusId, mode, kind } = z
@@ -271,6 +291,7 @@ export async function createApp(options: {
     return { ok: true };
   });
   app.addHook("onClose", async () => {
+    tutor.glossary.close();
     await live.stop("server_shutdown");
     for (const c of clients.values()) c.close();
     await backend.close();

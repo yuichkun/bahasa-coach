@@ -12,6 +12,7 @@ import {
 import { api } from "./api";
 import { VoiceClient } from "./voice";
 import { Gloss } from "./Gloss";
+import { ingestGlossary, resumeGlossaryPrefetch } from "./glossary-cache";
 import { transcriptBlocks } from "../shared/transcript";
 import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
@@ -245,6 +246,7 @@ export default function App() {
   }
   const handler = useRef<(event: AppEvent) => void>(() => {});
   handler.current = (event) => {
+    if (event.type === "glossary") ingestGlossary(event);
     if (event.type === "lesson") updateLesson(event.lesson);
     if (event.type === "status") setStatus(event.status);
     if (event.type === "notice") setNotice(event.message);
@@ -281,7 +283,10 @@ export default function App() {
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/events?client=${owner.current}`,
       );
       socket.current = ws;
-      ws.onopen = () => setConnectedEvents(true);
+      ws.onopen = () => {
+        setConnectedEvents(true);
+        resumeGlossaryPrefetch();
+      };
       ws.onmessage = (e) => {
         try {
           handler.current(JSON.parse(e.data));
@@ -602,7 +607,7 @@ export default function App() {
               }}
             >
               {blocks.length ? (
-                blocks.map((block) => (
+                blocks.map((block, blockIndex) => (
                   <article className={"caption-group " + block.role} key={block.id}>
                     <span className="speaker">
                       {block.role === "assistant" ? "コーチ" : "あなた"}
@@ -610,6 +615,8 @@ export default function App() {
                     <p className="caption-text" dir="auto">
                       <Gloss
                         text={block.text}
+                        prefetch={blockIndex >= blocks.length - 2}
+                        streaming={running}
                         onOpen={() => setFollow(false)}
                         onInspect={() => inspect(voice)}
                       />
@@ -866,7 +873,7 @@ export default function App() {
                 {writing.attempts.slice(1).map((a) => (
                   <div key={a.id}>
                     <p>
-                      <Gloss text={a.answer} />
+                      <Gloss text={a.answer} prefetch={false} />
                     </p>
                     <p className="muted">{a.feedback.explanation}</p>
                   </div>

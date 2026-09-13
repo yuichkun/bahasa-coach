@@ -10,9 +10,23 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Annotation } from "../shared/types";
-import { api } from "./api";
+import {
+  glossKey,
+  wordContext,
+  sentenceContexts,
+  words,
+  normalizeWord,
+  type GlossValue,
+} from "../shared/glossary";
+import {
+  peekMeaning,
+  requestMeaning,
+  seedAnnotations,
+  subscribeGlossary,
+  warmGlossarySource,
+} from "./glossary-cache";
+export { clearGlossCache } from "./glossary-cache";
 
-const cache = new Map<string, Promise<Annotation>>();
 type Selection = {
   key: string;
   term: string;
@@ -23,6 +37,7 @@ type Selection = {
   onInspect?: () => void;
 };
 type Controller = {
+  prefetch: boolean;
   selected: HTMLElement | null;
   tooltipId: string;
   offer: (s: Selection, immediately?: boolean) => void;
@@ -31,28 +46,16 @@ type Controller = {
   keep: () => void;
 };
 const Context = createContext<Controller | null>(null);
-function fetchMeaning(selection: Selection) {
-  if (selection.annotation) return Promise.resolve(selection.annotation);
-  const existing = cache.get(selection.key);
-  if (existing) return existing;
-  const promise = api<Annotation>("/lookup", {
-    term: selection.term,
-    context: selection.context,
-  }).catch((error) => {
-    cache.delete(selection.key);
-    throw error;
-  });
-  cache.set(selection.key, promise);
-  if (cache.size > 300) cache.delete(cache.keys().next().value!);
-  return promise;
-}
-export function clearGlossCache() {
-  cache.clear();
-}
-export function GlossProvider({ children }: { children: ReactNode }) {
+export function GlossProvider({
+  children,
+  prefetch = true,
+}: {
+  children: ReactNode;
+  prefetch?: boolean;
+}) {
   const tooltipId = useId(),
     [selection, setSelection] = useState<Selection | null>(null),
-    [value, setValue] = useState<Annotation | null>(null),
+    [value, setValue] = useState<GlossValue | null>(null),
     [error, setError] = useState(""),
     [retry, setRetry] = useState(0),
     [position, setPosition] = useState({ left: 0, top: 0 });
@@ -74,11 +77,13 @@ export function GlossProvider({ children }: { children: ReactNode }) {
     clearTimers();
     const show = () => {
       s.onOpen?.();
-      setValue(s.annotation ?? null);
+      setValue(
+        s.annotation ? { ...s.annotation, scope: "context" } : peekMeaning(s.term, s.context),
+      );
       setError("");
       setSelection(s);
     };
-    if (immediately) show();
+    if (immediately || s.annotation || peekMeaning(s.term, s.context)) show();
     else openTimer.current = setTimeout(show, 180);
   };
   const leave = () => {
@@ -87,25 +92,44 @@ export function GlossProvider({ children }: { children: ReactNode }) {
   };
   useEffect(() => {
     if (!selection) return;
-    let alive = true;
-    void fetchMeaning(selection)
-      .then((result) => {
-        if (
-          alive &&
-          selection.anchor.isConnected &&
-          selection.anchor.textContent === selection.term
-        ) {
-          setValue(result);
+    let alive = true,
+      inspected = false;
+    const receive = (result: GlossValue) => {
+      if (
+        alive &&
+        selection.anchor.isConnected &&
+        selection.anchor.textContent === selection.term
+      ) {
+        setValue(result);
+        if (!inspected) {
+          inspected = true;
           selection.onInspect?.();
         }
-      })
-      .catch(() => {
-        if (alive) setError("意味を取得できませんでした。");
-      });
+      }
+    };
+    const unsubscribe = subscribeGlossary(() => {
+      const value = peekMeaning(selection.term, selection.context);
+      if (value) receive(value);
+    });
+    if (selection.annotation) receive({ ...selection.annotation, scope: "context" });
+    else {
+      const cached = peekMeaning(selection.term, selection.context);
+      if (cached) receive(cached);
+      void requestMeaning(selection.term, selection.context)
+        .then(receive)
+        .catch(() => {
+          if (alive) setError("意味を取得できませんでした。");
+        });
+    }
+    const stopWarm = prefetch
+      ? warmGlossarySource("hover:" + selection.key, selection.context)
+      : () => {};
     return () => {
       alive = false;
+      unsubscribe();
+      stopWarm();
     };
-  }, [selection, retry]);
+  }, [selection, retry, prefetch]);
   useEffect(() => {
     if (!selection) return;
     const place = () => {
@@ -161,7 +185,15 @@ export function GlossProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => clearTimers(), []);
   return (
     <Context.Provider
-      value={{ selected: selection?.anchor ?? null, tooltipId, offer, leave, close, keep }}
+      value={{
+        prefetch,
+        selected: selection?.anchor ?? null,
+        tooltipId,
+        offer,
+        leave,
+        close,
+        keep,
+      }}
     >
       {children}
       {selection &&
@@ -182,6 +214,7 @@ export function GlossProvider({ children }: { children: ReactNode }) {
                 ×
               </button>
             </div>
+            {value?.scope === "general" && <small className="word-scope">基本の意味</small>}
             {value ? (
               <>
                 <p>{value.meaning}</p>
@@ -218,20 +251,40 @@ export function GlossProvider({ children }: { children: ReactNode }) {
   );
 }
 
+const EMPTY_ANNOTATIONS: Annotation[] = [];
+
 export function Gloss({
   text,
-  annotations = [],
+  annotations = EMPTY_ANNOTATIONS,
+  prefetch = true,
+  streaming = false,
   onInspect,
   onOpen,
 }: {
   text: string;
   annotations?: Annotation[];
+  prefetch?: boolean;
+  streaming?: boolean;
   onInspect?: () => void;
   onOpen?: () => void;
 }) {
   const controller = useContext(Context);
+  const sourceId = useId();
+  const annotationKey = JSON.stringify(annotations);
+  useEffect(() => {
+    seedAnnotations(text, JSON.parse(annotationKey));
+  }, [text, annotationKey]);
+  const shouldWarm = prefetch && Boolean(controller?.prefetch);
+  useEffect(() => {
+    if (shouldWarm) return warmGlossarySource(sourceId, text, streaming);
+  }, [sourceId, text, streaming, shouldWarm]);
+  const spans = sentenceContexts(text);
+  const occurrences = new Map<string, number>();
+  for (const w of words(text))
+    occurrences.set(normalizeWord(w.term), (occurrences.get(normalizeWord(w.term)) || 0) + 1);
   const lookup = new Map(
     annotations
+      .filter((a) => (occurrences.get(normalizeWord(a.term)) || 0) === 1)
       .filter((a) => /^[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*$/u.test(a.term))
       .map((a) => [a.term.toLocaleLowerCase("id"), a]),
   );
@@ -244,14 +297,11 @@ export function Gloss({
       term = match[0];
     if (index > cursor)
       result.push(<span key={`text-${cursor}`}>{text.slice(cursor, index)}</span>);
-    const context = text.slice(
-      Math.max(0, index - 120),
-      Math.min(text.length, index + term.length + 180),
-    );
+    const context = wordContext(text, index, spans);
     const open = (anchor: HTMLElement, immediately = false) => {
       controller?.offer(
         {
-          key: term.toLocaleLowerCase("id") + "\n" + context,
+          key: glossKey(term, context),
           term,
           context,
           anchor,

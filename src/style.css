@@ -833,3 +833,10 @@ main {
     scroll-behavior: auto !important;
   }
 }
+
+.word-scope {
+  display: block;
+  margin: -3px 0 8px;
+  font-size: 10px;
+  color: var(--muted);
+}

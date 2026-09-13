@@ -20,14 +20,14 @@ describe("dictionary interaction without a browser", () => {
         }),
     );
     const view = render(
-      <GlossProvider>
+      <GlossProvider prefetch={false}>
         <Gloss text="me" />
       </GlossProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "me" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     view.rerender(
-      <GlossProvider>
+      <GlossProvider prefetch={false}>
         <Gloss text="mengerti" />
       </GlossProvider>,
     );
@@ -36,23 +36,26 @@ describe("dictionary interaction without a browser", () => {
     await waitFor(() => expect(screen.queryByText("古い結果")).toBeNull());
   });
   it("looks up a live-caption word on hover and renders outside the scrolling transcript", async () => {
-    const fetcher = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({ term: "ngerti", meaning: "わかる", formal: "mengerti", note: "口語" }),
-        ),
-      );
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          term: "dengerin",
+          meaning: "聞く",
+          formal: "mendengarkan",
+          note: "口語",
+        }),
+      ),
+    );
     render(
-      <GlossProvider>
+      <GlossProvider prefetch={false}>
         <div data-testid="transcript" style={{ overflow: "hidden" }}>
-          <Gloss text="Aku ngerti sekarang." />
+          <Gloss text="Aku dengerin sekarang." />
         </div>
       </GlossProvider>,
     );
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "ngerti" }));
-    const dialog = await screen.findByRole("dialog", { name: "ngertiの意味" });
-    await waitFor(() => expect(dialog.textContent).toContain("mengerti"));
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "dengerin" }));
+    const dialog = await screen.findByRole("dialog", { name: "dengerinの意味" });
+    await waitFor(() => expect(dialog.textContent).toContain("mendengarkan"));
     expect(dialog.parentElement).toBe(document.body);
     expect(fetcher).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(document, { key: "Escape" });
@@ -60,7 +63,7 @@ describe("dictionary interaction without a browser", () => {
   });
   it("keeps a known meaning open on focus followed by click", async () => {
     render(
-      <GlossProvider>
+      <GlossProvider prefetch={false}>
         <Gloss
           text="nggak"
           annotations={[{ term: "nggak", meaning: "〜ない", formal: "tidak", note: "口語" }]}
@@ -76,7 +79,7 @@ describe("dictionary interaction without a browser", () => {
     let finish!: (value: Response) => void;
     vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => {
       const { term } = JSON.parse(typeof options?.body === "string" ? options?.body : "");
-      if (term === "bisa")
+      if (term === "mengatur")
         return new Promise((resolve) => {
           finish = resolve;
         });
@@ -87,20 +90,22 @@ describe("dictionary interaction without a browser", () => {
       );
     });
     render(
-      <GlossProvider>
-        <Gloss text="bisa datang" />
+      <GlossProvider prefetch={false}>
+        <Gloss text="mengatur datang" />
       </GlossProvider>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "bisa" }));
+    fireEvent.click(screen.getByRole("button", { name: "mengatur" }));
     fireEvent.click(screen.getByRole("button", { name: "datang" }));
     await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("来る"));
     finish(
-      new Response(JSON.stringify({ term: "bisa", meaning: "できる", formal: "bisa", note: "" })),
+      new Response(
+        JSON.stringify({ term: "mengatur", meaning: "調整する", formal: "mengatur", note: "" }),
+      ),
     );
     await waitFor(() =>
       expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe("datangの意味"),
     );
-    expect(screen.getByRole("dialog").textContent).not.toContain("できる");
+    expect(screen.getByRole("dialog").textContent).not.toContain("調整する");
   });
   it("allows retry after a failed lookup", async () => {
     vi.spyOn(globalThis, "fetch")
@@ -109,7 +114,7 @@ describe("dictionary interaction without a browser", () => {
         new Response(JSON.stringify({ term: "besok", meaning: "明日", formal: "besok", note: "" })),
       );
     render(
-      <GlossProvider>
+      <GlossProvider prefetch={false}>
         <Gloss text="besok" />
       </GlossProvider>,
     );

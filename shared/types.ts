@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { GlossUpdate } from "./glossary.ts";
 
 export const annotationSchema = z.object({
   term: z.string(),
@@ -111,6 +112,7 @@ export interface AppStatus {
   };
 }
 export type AppEvent =
+  | ({ type: "glossary" } & GlossUpdate)
   | { type: "lesson"; lesson: Lesson }
   | { type: "status"; status: AppStatus }
   | { type: "live"; event: Record<string, unknown>; lessonId: string }
