@@ -6,7 +6,6 @@ import {
   type AppStatus,
   type Direction,
   type Lesson,
-  type TranscriptRow,
   type PracticeFocus,
 } from "../shared/types";
 import { api } from "./api";
@@ -16,6 +15,8 @@ import { ingestGlossary, resumeGlossaryPrefetch } from "./glossary-cache";
 import { transcriptBlocks } from "../shared/transcript";
 import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
+import { SpeechNote } from "./SpeechNote";
+import { VoiceActions } from "./VoiceActions";
 
 type View = "voice" | "writing" | "history" | "settings";
 const labels: Record<View, string> = {
@@ -69,104 +70,6 @@ function Icon({ name }: { name: string }) {
     >
       {icons[name]}
     </svg>
-  );
-}
-function Caption({
-  row,
-  lessonId,
-  onSaved,
-  report,
-}: {
-  row: TranscriptRow;
-  lessonId: string;
-  onSaved: (l: Lesson) => void;
-  report: (s: string) => void;
-}) {
-  const [editing, setEditing] = useState(false),
-    [text, setText] = useState(""),
-    [source, setSource] = useState(""),
-    [reason, setReason] = useState(""),
-    [busy, setBusy] = useState(false);
-  function edit() {
-    setSource(row.original);
-    setText(row.corrected ?? row.original);
-    setReason("");
-    setEditing(true);
-  }
-  async function correct() {
-    setBusy(true);
-    try {
-      const r = await api<{ original: string; corrected: string; explanation: string }>(
-        `/lessons/${lessonId}/correct`,
-        { rowId: row.id },
-      );
-      setText(r.corrected);
-      setSource(r.original);
-      setReason(r.explanation);
-    } catch (e) {
-      report((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function save() {
-    setBusy(true);
-    try {
-      onSaved(
-        await api<Lesson>(`/lessons/${lessonId}/revise`, {
-          rowId: row.id,
-          original: source,
-          corrected: text,
-        }),
-      );
-      setEditing(false);
-    } catch (e) {
-      report((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <article className={`caption ${row.role}`}>
-      <div className="caption-meta">
-        <span>{row.role === "assistant" ? "コーチ" : "あなた"}</span>
-        <button className="text-button" onClick={edit}>
-          字幕を修正
-        </button>
-      </div>
-      <p className="caption-text" dir="auto">
-        {row.corrected ?? row.original}
-      </p>
-      {row.corrected !== null && (
-        <details>
-          <summary>補正済み・原文を見る</summary>
-          <p>{row.original}</p>
-        </details>
-      )}
-      {row.revisionStale && <small>原文が更新されたため、以前の補正は適用していません。</small>}
-      {editing && (
-        <div className="caption-editor">
-          <label>
-            聞き取られた内容を修正
-            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} />
-          </label>
-          <div className="button-row">
-            <button onClick={() => void correct()} disabled={busy}>
-              文脈から補正
-            </button>
-            <button className="primary" onClick={() => void save()} disabled={busy}>
-              この内容で保存
-            </button>
-            <button className="text-button" onClick={() => setEditing(false)}>
-              キャンセル
-            </button>
-          </div>
-          {reason && (
-            <p className="hint">{reason}（補正案です。音声を再認識した結果ではありません。）</p>
-          )}
-        </div>
-      )}
-    </article>
   );
 }
 
@@ -431,6 +334,9 @@ export default function App() {
   }
   function inspect(lesson: Lesson | null) {
     setFollow(false);
+    recordAssistance(lesson);
+  }
+  function recordAssistance(lesson: Lesson | null) {
     if (lesson?.practice && !assisted.current.has(lesson.id)) {
       assisted.current.add(lesson.id);
       const request = api(`/lessons/${lesson.id}/assistance`, {});
@@ -621,20 +527,17 @@ export default function App() {
                         onInspect={() => inspect(voice)}
                       />
                     </p>
-                    <details className="caption-tools">
-                      <summary>訂正</summary>
-                      <div className="source-rows">
-                        {block.rows.map((row) => (
-                          <Caption
-                            key={row.id}
-                            row={row}
-                            lessonId={voice!.id}
-                            onSaved={updateLesson}
-                            report={setNotice}
-                          />
-                        ))}
-                      </div>
-                    </details>
+                    {block.role === "user" && voice && (
+                      <SpeechNote
+                        key={block.id}
+                        lessonId={voice.id}
+                        source={block.text}
+                        feedback={voice.speechFeedback?.find((f) => f.blockId === block.id)}
+                        onShown={() => recordAssistance(voice)}
+                        onInspect={() => inspect(voice)}
+                        onOpen={() => setFollow(false)}
+                      />
+                    )}
                   </article>
                 ))
               ) : (
@@ -702,31 +605,24 @@ export default function App() {
               <details className="more-controls">
                 <summary>その他</summary>
                 <div>
-                  {[
-                    ["repeat", "もう一度"],
-                    ["slow", "ゆっくり"],
-                    ["japanese", "日本語で説明"],
-                  ].map(([action, label]) => (
-                    <button
-                      key={action}
-                      disabled={!owns || active?.status !== "active"}
-                      onClick={() =>
-                        void api("/live/action", { owner: owner.current, action }).catch((e) =>
-                          setNotice(e.message),
-                        )
-                      }
-                    >
-                      {label}
-                    </button>
-                  ))}
+                  <VoiceActions
+                    owner={owner.current}
+                    disabled={!owns || active?.status !== "active"}
+                    onError={setNotice}
+                  />
                   <button
-                    onClick={() =>
+                    onClick={(event) => {
+                      const menu = event.currentTarget.closest("details");
+                      if (menu) {
+                        menu.open = false;
+                        menu.querySelector("summary")?.focus();
+                      }
                       void audio.current
                         ?.play()
-                        .catch(() => setNotice("会話を開始してから再生してください。"))
-                    }
+                        .catch(() => setNotice("会話を開始してから再生してください。"));
+                    }}
                   >
-                    音声を再生
+                    音声の再生を再開
                   </button>
                   <p>
                     今回 ${voiceCost(currentSeconds).toFixed(2)} · 今月 $

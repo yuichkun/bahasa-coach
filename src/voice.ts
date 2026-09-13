@@ -32,7 +32,9 @@ export class VoiceClient {
         void this.audio
           .play()
           .catch(() =>
-            onFailure("音声の再生が止められました。「その他」の「音声を再生」を押してください。"),
+            onFailure(
+              "音声の再生が止められました。「その他」の「音声の再生を再開」を押してください。",
+            ),
           );
       });
       const channel = peer.createDataChannel("oai-events");

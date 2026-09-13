@@ -840,3 +840,34 @@ main {
   font-size: 10px;
   color: var(--muted);
 }
+
+.speech-note {
+  margin: 10px 0 4px;
+  padding: 10px 14px;
+  background: #f3f6f3;
+  border-radius: 6px;
+  color: #2f4737;
+}
+.speech-note-label {
+  font-size: 12px;
+}
+.speech-note-original {
+  font-size: 13px;
+  color: #5a625c;
+  margin: 5px 0;
+}
+.speech-note-natural {
+  font-size: 16px;
+  line-height: 1.7;
+  margin: 0;
+}
+.speech-note-reason {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 5px 0 0;
+  color: #47564b;
+}
+.speech-note-error {
+  font-size: 12px;
+  color: #656565;
+}

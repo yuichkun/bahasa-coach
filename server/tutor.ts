@@ -18,6 +18,7 @@ import {
 import type { TutorBackend } from "./codex.ts";
 import type { Store } from "./store.ts";
 import { Glossary } from "./glossary.ts";
+import { SpeechFeedbackService } from "./speech-feedback.ts";
 
 export const TEACHING = `You are Bahasa Coach, an Indonesian tutor for a Japanese-speaking adult who knows basic grammar and needs output practice, especially nuanced work conversations.
 Use natural, moderately informal Indonesian appropriate for adult colleagues. Do not mechanically strip meN-/meng- prefixes. Teach actual colloquial vocabulary, label regional/strong slang, and pair it with the correct formal equivalent. Do not mark acceptable informal forms as errors. Accept valid alternate translations. Preserve the learner's intended meaning and level of politeness.
@@ -30,11 +31,13 @@ export class Tutor {
   backend: TutorBackend;
   store: Store;
   glossary: Glossary;
+  speech: SpeechFeedbackService;
   private hints = new Map<string, z.infer<typeof replyHintsSchema>>();
   constructor(backend: TutorBackend, store: Store) {
     this.backend = backend;
     this.store = store;
     this.glossary = new Glossary(store, backend);
+    this.speech = new SpeechFeedbackService(store, backend, TEACHING);
   }
   private async ask<T>(
     instruction: string,

@@ -10,7 +10,7 @@ export interface TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean },
+    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean },
   ): Promise<unknown>;
   status(): Promise<AppStatus["chatgpt"]>;
   login(): Promise<{ authUrl: string }>;
@@ -29,6 +29,7 @@ export class CodexBackend implements TutorBackend {
   private queue: Promise<unknown> = Promise.resolve();
   private lookupQueue: Promise<unknown> = Promise.resolve();
   private prefetchQueue: Promise<unknown> = Promise.resolve();
+  private feedbackQueue: Promise<unknown> = Promise.resolve();
   private loginPending = false;
   private loginError: string | null = null;
   private dataDir: string;
@@ -183,12 +184,19 @@ export class CodexBackend implements TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean },
+    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean },
   ): Promise<unknown> {
     const task = (
-      options?.prefetch ? this.prefetchQueue : options?.interactive ? this.lookupQueue : this.queue
+      options?.feedback
+        ? this.feedbackQueue
+        : options?.prefetch
+          ? this.prefetchQueue
+          : options?.interactive
+            ? this.lookupQueue
+            : this.queue
     ).then(() => this.run(prompt, schema));
-    if (options?.prefetch) this.prefetchQueue = task.catch(() => {});
+    if (options?.feedback) this.feedbackQueue = task.catch(() => {});
+    else if (options?.prefetch) this.prefetchQueue = task.catch(() => {});
     else if (options?.interactive) this.lookupQueue = task.catch(() => {});
     else this.queue = task.catch(() => {});
     return task;

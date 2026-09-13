@@ -35,6 +35,8 @@ export async function createApp(options: {
   };
   const live = new LiveManager(store, tutor, () => voiceKey, emit);
   tutor.glossary.onReady = (update) => emit({ type: "glossary", ...update });
+  tutor.speech.onChange = (lesson) => emit({ type: "lesson", lesson });
+  tutor.speech.resumePending();
   const status = async (): Promise<AppStatus> => {
     const u = store.monthUsage();
     return {
@@ -250,6 +252,12 @@ export async function createApp(options: {
     const { rowId } = z.object({ rowId: z.string().uuid() }).parse(req.body);
     return tutor.correct((req.params as { id: string }).id, rowId);
   });
+  app.post("/api/lessons/:id/speech-feedback/retry", (req) => {
+    const { blockId } = z.object({ blockId: z.string().uuid() }).parse(req.body);
+    const id = (req.params as { id: string }).id;
+    tutor.speech.schedule(id, blockId);
+    return { ok: true };
+  });
   app.post("/api/lessons/:id/revise", (req) => {
     const { rowId, original, corrected } = z
       .object({
@@ -259,6 +267,7 @@ export async function createApp(options: {
       })
       .parse(req.body);
     const lesson = store.revise((req.params as { id: string }).id, rowId, original, corrected);
+    tutor.speech.schedule(lesson.id);
     emit({ type: "lesson", lesson });
     return lesson;
   });
@@ -274,11 +283,11 @@ export async function createApp(options: {
       throw new Error("字幕の接続が準備できていません。再読み込みしてください。");
     return live.start(owner, lessonId, sdp);
   });
-  app.post("/api/live/action", (req) => {
+  app.post("/api/live/action", async (req) => {
     const { owner, action } = z
       .object({ owner: z.string().uuid(), action: z.enum(["repeat", "slow", "japanese"]) })
       .parse(req.body);
-    live.action(owner, action);
+    await live.action(owner, action);
     return { ok: true };
   });
   app.post("/api/live/stop", async (req) => {
@@ -291,6 +300,7 @@ export async function createApp(options: {
     return { ok: true };
   });
   app.addHook("onClose", async () => {
+    tutor.speech.close();
     tutor.glossary.close();
     await live.stop("server_shutdown");
     for (const c of clients.values()) c.close();

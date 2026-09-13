@@ -12,6 +12,7 @@ import type {
   Kind,
   Lesson,
   TranscriptRow,
+  SpeechFeedback,
 } from "../shared/types.ts";
 
 type Row = Record<string, any>;
@@ -28,6 +29,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS fragments(event_id TEXT NOT NULL, lesson_id TEXT NOT NULL REFERENCES lessons(id), row_id TEXT NOT NULL REFERENCES transcript_rows(id), delta TEXT NOT NULL, start_ms REAL NOT NULL, end_ms REAL NOT NULL, arrival INTEGER PRIMARY KEY AUTOINCREMENT, UNIQUE(lesson_id,event_id));
       CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY AUTOINCREMENT, row_id TEXT NOT NULL REFERENCES transcript_rows(id), original TEXT NOT NULL, corrected TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS voice_usage(lesson_id TEXT PRIMARY KEY REFERENCES lessons(id), provider_id TEXT, seconds REAL NOT NULL DEFAULT 0, confirmed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS speech_feedback(lesson_id TEXT NOT NULL REFERENCES lessons(id), block_id TEXT NOT NULL, source TEXT NOT NULL, result TEXT, status TEXT NOT NULL, PRIMARY KEY(lesson_id,block_id));
     `);
     this.learning = new LearningStore(this);
     this.learning.init();
@@ -46,6 +48,7 @@ export class Store {
     const r = this.db.prepare("SELECT * FROM lessons WHERE id=?").get(id) as Row | undefined;
     if (!r) throw Object.assign(new Error("練習が見つかりません。"), { statusCode: 404 });
     const exercise: Exercise | null = r.exercise ? JSON.parse(r.exercise) : null;
+    const rows = this.rows(id);
     return {
       id: r.id,
       kind: r.kind,
@@ -57,7 +60,8 @@ export class Store {
       status: r.status,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
-      rows: this.rows(id),
+      rows,
+      speechFeedback: this.speechFeedback(id, rows),
       review: this.learning.review(id),
       practice: this.learning.practice(id),
       attempts: (
@@ -94,6 +98,7 @@ export class Store {
         feedback: l.attempts[0]?.feedback,
         practice: l.practice,
         review: l.review,
+        speechFeedback: l.speechFeedback?.filter((f) => f.result?.outcome === "correction"),
         conversation: transcriptBlocks(l.rows)
           .slice(-15)
           .map((t) => ({
@@ -109,6 +114,33 @@ export class Store {
       .prepare("UPDATE lessons SET exercise=?, updated_at=? WHERE id=?")
       .run(JSON.stringify(value), Date.now(), id);
     return this.get(id);
+  }
+  speechFeedback(id: string, rows = this.rows(id)): SpeechFeedback[] {
+    const sources = new Map(
+      transcriptBlocks(rows)
+        .filter((b) => b.role === "user" && !b.rows.some((r) => r.revisionStale))
+        .map((b) => [b.id, b.text]),
+    );
+    return (this.db.prepare("SELECT * FROM speech_feedback WHERE lesson_id=?").all(id) as Row[])
+      .filter((r) => sources.get(r.block_id) === r.source)
+      .map((r) => ({
+        blockId: r.block_id,
+        source: r.source,
+        result: r.result ? JSON.parse(r.result) : null,
+        status: r.status,
+      }));
+  }
+  saveSpeechFeedback(id: string, value: SpeechFeedback) {
+    this.db
+      .prepare(`INSERT INTO speech_feedback VALUES(?,?,?,?,?)
+      ON CONFLICT(lesson_id,block_id) DO UPDATE SET source=excluded.source,result=excluded.result,status=excluded.status`)
+      .run(
+        id,
+        value.blockId,
+        value.source,
+        value.result ? JSON.stringify(value.result) : null,
+        value.status,
+      );
   }
   draft(id: string, value: string) {
     this.db

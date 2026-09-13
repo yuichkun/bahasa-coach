@@ -34,6 +34,19 @@ export const replyHintsSchema = z.object({
   hints: z.array(z.object({ text: z.string(), intent: z.string() })).max(3),
 });
 export type ReplyHint = z.infer<typeof replyHintsSchema>["hints"][number];
+export const speechFeedbackSchema = z.object({
+  outcome: z.enum(["correction", "clear", "uncertain"]),
+  original: z.string(),
+  natural: z.string(),
+  explanation: z.string(),
+  annotations: z.array(annotationSchema),
+});
+export interface SpeechFeedback {
+  blockId: string;
+  source: string;
+  result: z.infer<typeof speechFeedbackSchema> | null;
+  status: "pending" | "ready" | "error";
+}
 export interface PracticeFocus {
   id: string;
   sourceLessonId: string;
@@ -75,6 +88,7 @@ export interface Lesson {
   updatedAt: number;
   rows: TranscriptRow[];
   attempts: Attempt[];
+  speechFeedback?: SpeechFeedback[];
   review?: {
     status: "ready" | "clear" | "uncertain" | "stale";
     focus: PracticeFocus | null;
