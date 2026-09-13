@@ -37,7 +37,11 @@ export function LearningLoop({
         <h2>{label}</h2>
         {check.evidence && (
           <blockquote>
-            <Gloss text={check.evidence} annotations={annotations} />
+            <Gloss
+              japanese={lesson.kind === "writing" && lesson.direction.endsWith("-ja")}
+              text={check.evidence}
+              annotations={annotations}
+            />
           </blockquote>
         )}
         <p>{check.explanation}</p>
@@ -88,13 +92,21 @@ export function LearningLoop({
       <div className="learning-example">
         <span>あなたの表現</span>
         <p>
-          <Gloss text={focus.original} annotations={annotations} />
+          <Gloss
+            japanese={lesson.kind === "writing" && lesson.direction.endsWith("-ja")}
+            text={focus.original}
+            annotations={annotations}
+          />
         </p>
       </div>
       <div className="learning-example suggested">
         <span>こう言うと自然</span>
         <p>
-          <Gloss text={focus.suggestion} annotations={annotations} />
+          <Gloss
+            japanese={lesson.kind === "writing" && lesson.direction.endsWith("-ja")}
+            text={focus.suggestion}
+            annotations={annotations}
+          />
         </p>
       </div>
       <p>{focus.reason}</p>

@@ -1,3 +1,6 @@
+import { useLanguage } from "./LanguageContext";
+import { usePinyin } from "./usePinyin";
+import type { Language } from "../shared/languages";
 import {
   createContext,
   useCallback,
@@ -29,12 +32,22 @@ export { clearGlossCache } from "./glossary-cache";
 
 type Selection = {
   term: string;
+  language?: Language;
+  reading?: string;
   context: string;
   anchor: HTMLElement;
   annotation?: Annotation;
   onOpen?: () => void;
   onInspect?: () => void;
 };
+function selectionMatches(selection: Selection) {
+  return (
+    selection.anchor.isConnected &&
+    (selection.anchor.querySelector(".term-source")?.textContent ??
+      selection.anchor.textContent) === selection.term &&
+    selection.anchor.dataset.language === (selection.language ?? "id")
+  );
+}
 type Controller = {
   prefetch: boolean;
   selected: HTMLElement | null;
@@ -71,7 +84,7 @@ export function GlossProvider({
   const offer = (s: Selection) => {
     const ready = s.annotation
       ? { ...s.annotation, scope: "context" as const }
-      : peekMeaning(s.term, s.context);
+      : peekMeaning(s.term, s.context, s.language);
     if (!ready) return;
     clearTimers();
     s.onOpen?.();
@@ -86,11 +99,7 @@ export function GlossProvider({
     let alive = true,
       inspected = false;
     const receive = (result: GlossValue) => {
-      if (
-        alive &&
-        selection.anchor.isConnected &&
-        selection.anchor.textContent === selection.term
-      ) {
+      if (alive && selectionMatches(selection)) {
         setValue(result);
         if (!inspected) {
           inspected = true;
@@ -99,12 +108,12 @@ export function GlossProvider({
       }
     };
     const unsubscribe = subscribeGlossary(() => {
-      const value = peekMeaning(selection.term, selection.context);
+      const value = peekMeaning(selection.term, selection.context, selection.language);
       if (value) receive(value);
     });
     if (selection.annotation) receive({ ...selection.annotation, scope: "context" });
     else {
-      const cached = peekMeaning(selection.term, selection.context);
+      const cached = peekMeaning(selection.term, selection.context, selection.language);
       if (cached) receive(cached);
     }
     return () => {
@@ -115,7 +124,7 @@ export function GlossProvider({
   useEffect(() => {
     if (!selection) return;
     const place = () => {
-      if (!selection.anchor.isConnected || selection.anchor.textContent !== selection.term) {
+      if (!selectionMatches(selection)) {
         close();
         return;
       }
@@ -146,9 +155,15 @@ export function GlossProvider({
     selection.anchor.setAttribute("aria-describedby", tooltipId);
     selection.anchor.setAttribute("aria-expanded", "true");
     const observer = new MutationObserver(() => {
-      if (!selection.anchor.isConnected || selection.anchor.textContent !== selection.term) close();
+      if (!selectionMatches(selection)) close();
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["data-language"],
+    });
     place();
     const sizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
     if (panel.current) sizeObserver?.observe(panel.current);
@@ -201,10 +216,19 @@ export function GlossProvider({
               </button>
             </div>
             {value?.scope === "general" && <small className="word-scope">基本の意味</small>}
+            {selection.reading && (
+              <p className="word-reading" lang="zh-Latn">
+                {selection.reading}
+              </p>
+            )}
             <p>{value.meaning}</p>
             {value.formal && (
               <div className="word-formal">
-                <span>正式形</span>
+                <span>
+                  {!selection.language || selection.language === "id"
+                    ? "正式形"
+                    : "丁寧な表現・標準形"}
+                </span>
                 {value.formal}
               </div>
             )}
@@ -224,6 +248,7 @@ export function Gloss({
   prefetch = true,
   streaming = false,
   highlight = "",
+  japanese = false,
   onInspect,
   onOpen,
 }: {
@@ -232,26 +257,31 @@ export function Gloss({
   prefetch?: boolean;
   streaming?: boolean;
   highlight?: string;
+  japanese?: boolean;
   onInspect?: () => void;
   onOpen?: () => void;
 }) {
   const controller = useContext(Context);
+  const { language, pinyin: showPinyin } = useLanguage();
+  const readings = usePinyin(text, language === "zh-Hans" && showPinyin);
   const sourceId = useId();
   const content = useRef<HTMLSpanElement>(null);
   useSyncExternalStore(subscribeGlossary, glossaryRevision, () => 0);
   const annotationKey = JSON.stringify(annotations);
   useEffect(() => {
-    seedAnnotations(text, JSON.parse(annotationKey));
-  }, [text, annotationKey]);
-  const shouldWarm = prefetch && Boolean(controller?.prefetch);
+    if (!(japanese && language === "zh-Hans"))
+      seedAnnotations(text, JSON.parse(annotationKey), language);
+  }, [text, annotationKey, language, japanese]);
+  const shouldWarm =
+    prefetch && !(japanese && language === "zh-Hans") && Boolean(controller?.prefetch);
   useEffect(() => {
     if (!shouldWarm) return;
     if (typeof IntersectionObserver === "undefined")
-      return warmGlossarySource(sourceId, text, streaming);
+      return warmGlossarySource(sourceId, text, streaming, language);
     let stop: (() => void) | undefined;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) stop ??= warmGlossarySource(sourceId, text, streaming);
+        if (entry.isIntersecting) stop ??= warmGlossarySource(sourceId, text, streaming, language);
         else {
           stop?.();
           stop = undefined;
@@ -264,15 +294,30 @@ export function Gloss({
       observer.disconnect();
       stop?.();
     };
-  }, [sourceId, text, streaming, shouldWarm]);
-  const spans = sentenceContexts(text);
+  }, [sourceId, text, streaming, shouldWarm, language]);
+  const explicitOnly = japanese && language === "zh-Hans";
+  const spans = sentenceContexts(text, language);
+  const tokens = explicitOnly
+    ? annotations
+        .flatMap((a) => {
+          const index = text.indexOf(a.term);
+          return a.term && index >= 0 && words(a.term, language).length
+            ? [{ term: a.term, index }]
+            : [];
+        })
+        .sort((a, b) => a.index - b.index || b.term.length - a.term.length)
+    : words(text, language);
+  const readingHelp = readings.length > 0 && tokens.length > 0;
+  useEffect(() => {
+    if (readingHelp) onInspect?.();
+  }, [text, readingHelp]);
   const occurrences = new Map<string, number>();
-  for (const w of words(text))
+  for (const w of tokens)
     occurrences.set(normalizeWord(w.term), (occurrences.get(normalizeWord(w.term)) || 0) + 1);
   const lookup = new Map(
     annotations
       .filter((a) => a.meaning.trim() && (occurrences.get(normalizeWord(a.term)) || 0) === 1)
-      .filter((a) => /^[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*$/u.test(a.term))
+
       .map((a) => [a.term.toLocaleLowerCase("id"), a]),
   );
   const result: ReactNode[] = [];
@@ -291,24 +336,37 @@ export function Gloss({
     );
   };
   let cursor = 0;
-  for (const match of text.matchAll(
-    /[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*/gu,
-  )) {
-    const index = match.index,
-      term = match[0];
+  for (const { index, term } of tokens) {
+    if (index < cursor) continue;
+    const reading = readings
+      .filter((r) => r.start >= index && r.end <= index + term.length)
+      .map((r) => r.reading)
+      .filter(Boolean)
+      .join(" ");
+    const painted = paint(term, index);
+    const content = reading ? (
+      <ruby>
+        <span className="term-source">{painted}</span>
+        <rt aria-hidden="true">{reading}</rt>
+      </ruby>
+    ) : (
+      painted
+    );
     if (index > cursor)
       result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor, index), cursor)}</span>);
-    const context = wordContext(text, index, spans);
+    const context = wordContext(text, index, spans, language);
     const annotation = lookup.get(term.toLocaleLowerCase("id"));
-    const ready = annotation || peekMeaning(term, context);
+    const ready = annotation || peekMeaning(term, context, language);
     if (!ready) {
-      result.push(<span key={`word-${index}`}>{paint(term, index)}</span>);
+      result.push(<span key={`word-${index}`}>{content}</span>);
       cursor = index + term.length;
       continue;
     }
     const open = (anchor: HTMLElement) => {
       controller?.offer({
         term,
+        language,
+        reading,
         context,
         anchor,
         annotation,
@@ -320,6 +378,8 @@ export function Gloss({
       <button
         key={`word-${index}`}
         className="term"
+        aria-label={term}
+        data-language={language}
         type="button"
         aria-haspopup="dialog"
         onMouseEnter={(e) => open(e.currentTarget)}
@@ -331,12 +391,20 @@ export function Gloss({
         }}
         onClick={(e) => open(e.currentTarget)}
       >
-        {paint(term, index)}
+        {content}
       </button>,
     );
     cursor = index + term.length;
   }
   if (cursor < text.length)
     result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor), cursor)}</span>);
-  return <span ref={content}>{result}</span>;
+  return (
+    <span
+      ref={content}
+      className={readings.length ? "pinyin-text" : undefined}
+      lang={japanese ? "ja" : language}
+    >
+      {result}
+    </span>
+  );
 }

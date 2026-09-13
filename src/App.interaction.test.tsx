@@ -5,6 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import App from "./App";
 import { GlossProvider } from "./Gloss";
 import type { Lesson, LiveInfo } from "../shared/types";
+import { LANGUAGE, directionFor, type Language } from "../shared/languages";
 const mocks = vi.hoisted(() => ({
   start: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn(),
@@ -404,4 +405,125 @@ it("does not say this microphone is listening when another tab owns the call", a
   expect(
     (screen.getByRole("button", { name: "マイクを止める" }) as HTMLButtonElement).disabled,
   ).toBe(true);
+});
+
+it.each(["zh-Hans", "en"] as Language[])(
+  "starts a %s conversation with the selected language",
+  async (language) => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, options) => {
+      if (url === "/api/lessons" && options?.method === "POST") {
+        const data = JSON.parse(options.body as string);
+        return new Response(
+          JSON.stringify({ ...free, language: data.language, direction: data.direction }),
+        );
+      }
+      return original(url, options);
+    });
+    render(
+      <GlossProvider>
+        <App />
+      </GlossProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "会話を始める" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "学習言語" }), {
+      target: { value: language },
+    });
+    expect(
+      screen.getByRole("heading", { name: `${LANGUAGE[language].coach} と話しましょう。` }),
+    ).toBeTruthy();
+    expect(Boolean(screen.queryByRole("checkbox", { name: "ピンインを表示" }))).toBe(
+      language === "zh-Hans",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "会話を始める" }));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalled());
+    const creation = vi
+      .mocked(fetch)
+      .mock.calls.find(([url, options]) => url === "/api/lessons" && options?.method === "POST")!;
+    expect(JSON.parse(creation[1]?.body as string)).toMatchObject({
+      language,
+      direction: directionFor(language),
+    });
+    expect(localStorage.getItem("bahasa.language")).toBe(language);
+  },
+);
+
+it("restores separate writing drafts and filters history when switching languages", async () => {
+  const english: Lesson = {
+    ...free,
+    id: "english-draft",
+    language: "en",
+    kind: "writing",
+    direction: "ja-en",
+    title: "英語の依頼",
+    exercise: {
+      title: "英語の依頼",
+      prompt: "依頼しましょう。",
+      context: "",
+      focus: [],
+      annotations: [],
+    },
+    draft: "Could you help?",
+  };
+  const chinese: Lesson = {
+    ...english,
+    id: "chinese-draft",
+    language: "zh-Hans",
+    direction: "ja-zh",
+    title: "中国語の依頼",
+    draft: "请帮我。",
+  };
+  localStorage.setItem("bahasa.language", "en");
+  localStorage.setItem("bahasa.writing.en", english.id);
+  localStorage.setItem("bahasa.writing.zh-Hans", chinese.id);
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, options) =>
+    url === "/api/lessons" && options?.method !== "POST"
+      ? new Response(JSON.stringify([english, chinese]))
+      : original(url, options),
+  );
+  render(
+    <GlossProvider prefetch={false}>
+      <App />
+    </GlossProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "作文" }));
+  await waitFor(() => expect(screen.getByDisplayValue("Could you help?")).toBeTruthy());
+  fireEvent.change(screen.getByLabelText("あなたの回答"), {
+    target: { value: "Could you help me tomorrow?" },
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "学習言語" }), {
+    target: { value: "zh-Hans" },
+  });
+  expect(screen.getByDisplayValue("请帮我。")).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "学習言語" }), { target: { value: "en" } });
+  expect(screen.getByDisplayValue("Could you help me tomorrow?")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "履歴" }));
+  await waitFor(() => expect(screen.getByText("英語の依頼")).toBeTruthy());
+  expect(screen.queryByText("中国語の依頼")).toBeNull();
+});
+
+it("disables language switching while a voice connection is active", async () => {
+  mocks.active = {
+    lessonId: free.id,
+    sessionId: "s",
+    owner: "another-tab",
+    status: "active",
+    seconds: 15,
+    startedAt: Date.now(),
+  };
+  render(
+    <GlossProvider>
+      <App />
+    </GlossProvider>,
+  );
+  await waitFor(() =>
+    expect((screen.getByRole("combobox", { name: "学習言語" }) as HTMLSelectElement).disabled).toBe(
+      true,
+    ),
+  );
 });

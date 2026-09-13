@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { GlossUpdate } from "./glossary.ts";
 import type { RecapState } from "./recap.ts";
 import type { TranslationPrecision } from "./translation-settings.ts";
+import type { Language, Direction } from "./languages.ts";
+export type { Direction } from "./languages.ts";
 
 export const annotationSchema = z.object({
   term: z.string(),
@@ -66,7 +68,6 @@ export interface PracticeContext {
 export type Annotation = z.infer<typeof annotationSchema>;
 export type Exercise = z.infer<typeof exerciseSchema>;
 export type Feedback = z.infer<typeof feedbackSchema>;
-export type Direction = "ja-id" | "id-ja";
 export type Kind = "voice" | "writing";
 export interface TranscriptRow {
   id: string;
@@ -79,6 +80,7 @@ export interface TranscriptRow {
 }
 export interface Lesson {
   id: string;
+  language?: Language;
   kind: Kind;
   direction: Direction;
   topic: string;

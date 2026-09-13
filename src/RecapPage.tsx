@@ -157,7 +157,11 @@ export function RecapPage({
                       <div className="recap-teaching">
                         <strong>ここがポイント</strong>
                         <p>
-                          <Gloss text={point.explanation} annotations={point.annotations} />
+                          <Gloss
+                            japanese
+                            text={point.explanation}
+                            annotations={point.annotations}
+                          />
                         </p>
                       </div>
                       {point.examples.length > 0 && (

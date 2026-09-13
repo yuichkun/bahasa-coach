@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { languageSchema, languageKey, type Language } from "./languages.ts";
+import { hasTargetText } from "./glossary.ts";
 import {
   DEFAULT_TRANSLATION_PRECISION,
   type TranslationPrecision,
@@ -6,6 +8,7 @@ import {
 
 const turnSchema = z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(1500) });
 export const translationRequestSchema = z.object({
+  language: languageSchema.optional(),
   sentence: z.string().trim().min(1).max(8000),
   speaker: z.enum(["user", "assistant"]),
   before: z.array(turnSchema).max(3),
@@ -22,10 +25,15 @@ export interface TranslationEntry {
   key: string;
   translation: string;
 }
-const segmenter = new Intl.Segmenter("id", { granularity: "sentence" });
-export function translationSpans(text: string) {
-  return [...segmenter.segment(text)]
-    .filter((part) => /[\p{Script=Latin}]/u.test(part.segment))
+const segmenters = Object.fromEntries(
+  ["id", "zh-Hans", "en"].map((language) => [
+    language,
+    new Intl.Segmenter(language, { granularity: "sentence" }),
+  ]),
+);
+export function translationSpans(text: string, language: Language = "id") {
+  return [...segmenters[language].segment(text)]
+    .filter((part) => hasTargetText(part.segment, language))
     .map((part) => ({
       text: part.segment.trim(),
       start: part.index,
@@ -37,8 +45,9 @@ export function sentenceRequest(
   text: string,
   index: number,
   context: TranslationContext,
+  language: Language = "id",
 ): TranslationRequest | null {
-  const span = translationSpans(text).find((s) => index >= s.start && index < s.end);
+  const span = translationSpans(text, language).find((s) => index >= s.start && index < s.end);
   if (!span || span.text.length > 8000) return null;
   const before = [...context.before];
   const after = [...context.after];
@@ -47,6 +56,7 @@ export function sentenceRequest(
   if (text.slice(span.end).trim())
     after.unshift({ role: context.speaker, text: text.slice(span.end).trim() });
   return {
+    ...(language === "id" ? {} : { language }),
     sentence: span.text,
     speaker: context.speaker,
     before: before.slice(-3).map((t) => ({ role: t.role, text: t.text.slice(-1500) })),
@@ -63,7 +73,7 @@ export function translationKey(
   // Retain punctuation, case, speaker and surrounding context: questions and
   // pronoun referents must not share a cache entry just because words match.
   return (
-    `sentence-v2:${precision}:` +
+    languageKey(request.language ?? "id", `sentence-v2:${precision}:`) +
     JSON.stringify({
       sentence: clean(request.sentence),
       speaker: request.speaker,

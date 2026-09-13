@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Store } from "./store.ts";
 import type { Feedback, PracticeCheck, PracticeContext, PracticeFocus } from "../shared/types.ts";
+import { languageOf, type Language } from "../shared/languages.ts";
 
 type Row = Record<string, any>;
 export class LearningStore {
@@ -110,6 +111,8 @@ export class LearningStore {
   }
   attach(lessonId: string, focusId: string, mode: "retry" | "transfer") {
     const focus = this.focus(focusId);
+    if (languageOf(this.store.get(lessonId)) !== languageOf(this.store.get(focus.sourceLessonId)))
+      throw new Error("同じ学習言語の表現を選んでください。");
     if (focus.state === "withdrawn")
       throw new Error("元の字幕・回答が更新されています。元の練習を確認してください。");
     if (mode === "transfer" && !["transfer_due", "transferred"].includes(focus.state))
@@ -120,12 +123,12 @@ export class LearningStore {
     if (focus.state === "proposed")
       this.store.db.prepare("UPDATE practice_focus SET state='practicing' WHERE id=?").run(focusId);
   }
-  due() {
+  due(language: Language = "id") {
     const r = this.store.db
       .prepare(
-        "SELECT id FROM practice_focus WHERE state='transfer_due' ORDER BY created_at LIMIT 1",
+        "SELECT f.id FROM practice_focus f JOIN lessons l ON l.id=f.source_lesson_id WHERE f.state='transfer_due' AND l.language=? ORDER BY f.created_at LIMIT 1",
       )
-      .get() as Row | undefined;
+      .get(language) as Row | undefined;
     return r ? this.focus(r.id) : null;
   }
   hint(lessonId: string) {

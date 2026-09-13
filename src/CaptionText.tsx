@@ -1,3 +1,4 @@
+import { useLanguage } from "./LanguageContext";
 import { sentenceRequest, translationSpans, type TranslationContext } from "../shared/translation";
 import {
   DEFAULT_TRANSLATION_PRECISION,
@@ -23,7 +24,8 @@ export function CaptionText({
   onOpen: () => void;
   onInspect: () => void;
 }) {
-  const spans = translationSpans(text);
+  const { language } = useLanguage();
+  const spans = translationSpans(text, language);
   const rows: { start: number; end: number; translate: boolean }[] = [];
   let cursor = 0;
   for (const span of spans) {
@@ -36,7 +38,7 @@ export function CaptionText({
   return (
     <>
       {rows.map((row) => {
-        const request = row.translate ? sentenceRequest(text, row.start, context) : null;
+        const request = row.translate ? sentenceRequest(text, row.start, context, language) : null;
         return (
           <div className="caption-sentence" key={row.start}>
             <p className="caption-text" dir="auto">

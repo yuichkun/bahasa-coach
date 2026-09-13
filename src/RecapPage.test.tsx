@@ -108,7 +108,8 @@ it("keeps whole-word dictionary targets and sentence context when a highlight cr
       />
     </GlossProvider>,
   );
-  expect(screen.getAllByRole("button", { name: "kantor" })).toHaveLength(3);
+  // Highlighted text also retains the whole word as its accessible name.
+  expect(screen.getAllByRole("button", { name: "kantor" })).toHaveLength(4);
   expect(screen.queryByRole("button", { name: "kan" })).toBeNull();
 });
 it("offers retry for a failed direct page request instead of an endless loading state", () => {

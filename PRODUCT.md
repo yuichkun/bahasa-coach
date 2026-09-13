@@ -12,7 +12,7 @@ Confirmed: React, Vite+, TypeScript, Node.js 24, Fastify, SQLite.
 
 ## Users
 
-A single Japanese-speaking adult who knows basic Indonesian grammar and wants much more output practice on their Mac, particularly work and nuanced discussions.
+Japanese-speaking adults practicing Indonesian, Mandarin Chinese (Simplified Chinese), or English on their own Mac. Each installation is local and single-user, using its owner's ChatGPT authentication and voice API key. Adapt language complexity to the learner's replies.
 
 ## Product Purpose
 
@@ -29,7 +29,7 @@ GPT-Live-1 voice API with interruption and both speakers' live captions. Codex A
 ## Product Principles
 
 - The learner's words and captions have first priority.
-- Teach natural, moderately informal Indonesian; show formal equivalents.
+- Teach natural adult conversation in the selected language, with Japanese explanations and useful register distinctions. Preserve the Indonesian colloquial/formal teaching approach; support Mandarin with Simplified Chinese and pinyin, and English with valid American/British variants.
 - Corrections must never silently rewrite what the learner actually said.
 - A simple, useful MVP outranks extra infrastructure or decorative features.
 - Preserve drafts and history when a provider fails.
@@ -45,3 +45,9 @@ Free voice conversation starts without an exercise. Provide contextual word look
 The voice partner roleplays Rani, a fictional adult living in Bandung. She shares everyday experiences and opinions, develops a topic naturally, and avoids repeating biographical interviews. Each transcript sentence displays its Japanese translation directly below the original without requiring hover, informed by surrounding dialogue and cached by context. Interrupted sentences are translated without inventing their endings. Failed translations recover automatically; no manual retry control belongs in the transcript. If a fast subtitle or dictionary model hits its usage limit, try another eligible model from the same subscription catalog and temporarily skip exhausted models. Never switch to a paid text API. Word popups remain dedicated to word meanings and formal forms. Prepare these before interaction and mark only ready definitions with an underline. Hover must immediately show cached content and must not start an AI request. Unready words stay plain text while background preparation proceeds.
 
 Translation precision is a persistent three-level user preference, with speed prioritized by default. It maps to available subscription models and supported reasoning effort internally, only for subtitle translation. Rani opens with a brief everyday situation, then develops one new detail or opinion when the learner responds, including short replies. She carries conversational material without requiring the learner to choose topics, repeating filler, or making every response a question. A compact situation seed replaces a full prepared plot in the voice prompt. Microphone-off silences audio immediately while connection closure is confirmed.
+
+## Language support
+
+A persistent selector offers Indonesian, Mandarin Chinese (Simplified Chinese) and English. Each lesson keeps its language immutably. Existing lessons migrate to Indonesian without modifying transcripts, recognition revisions or feedback. History, conversation memory, due practice, dictionary senses and sentence translations are isolated by language. Writing supports both Japanese-to-target and target-to-Japanese directions. A live voice connection must be stopped before switching languages. Paused conversations and drafts are restored by language. Rani remains the Indonesian partner; 林悦 is the Mandarin partner in Shanghai; Alex is the English partner in Seattle. All are fictional.
+
+Chinese text supports word segmentation and optional tone-marked pinyin across captions, replies, corrections and notebooks. Pinyin derives from the full text locally, preserving source offsets and quotes. Load its data only when needed. Japanese prose is only annotated for explicit Chinese terms; mixed-script runs containing kana are conservatively kept as Japanese. Reading assistance in a retry counts as assisted practice. Pronunciation scoring, multi-user hosting and deployment remain outside this scope.

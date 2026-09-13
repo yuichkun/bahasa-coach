@@ -1,22 +1,40 @@
 import type { Annotation } from "./types.ts";
+import { languageKey, type Language } from "./languages.ts";
 
 export type GlossValue = Annotation & { scope: "context" | "general" };
 export interface GlossRequest {
   term: string;
   context: string;
+  language?: Language;
 }
 export interface GlossEntry extends GlossRequest {
   annotation: Annotation;
 }
 export interface GlossUpdate {
+  language?: Language;
   entries: GlossEntry[];
   vocabulary: Annotation[];
   pending?: string[];
   failed?: string[];
 }
 export const WORD_PATTERN = /[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*/gu;
-export function words(text: string) {
+const chineseWords = new Intl.Segmenter("zh-Hans", { granularity: "word" });
+export function words(text: string, language: Language = "id") {
+  if (language === "zh-Hans") {
+    // Kana-bearing runs are Japanese. Do not annotate their kanji as Mandarin.
+    // Keep original UTF-16 offsets so source quotes and highlights stay unchanged.
+    return [...text.matchAll(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ー]+/gu)]
+      .filter((run) => !/[\p{Script=Hiragana}\p{Script=Katakana}ー]/u.test(run[0]))
+      .flatMap((run) =>
+        [...chineseWords.segment(run[0])]
+          .filter((part) => part.isWordLike && /\p{Script=Han}/u.test(part.segment))
+          .map((part) => ({ term: part.segment, index: run.index + part.index })),
+      );
+  }
   return [...text.matchAll(WORD_PATTERN)].map((m) => ({ term: m[0], index: m.index }));
+}
+export function hasTargetText(text: string, language: Language = "id") {
+  return words(text, language).length > 0;
 }
 export function normalizeWord(term: string) {
   return term.normalize("NFKC").toLocaleLowerCase("id").replace(/’/g, "'");
@@ -31,15 +49,20 @@ export function normalizeContext(text: string) {
     .replace(/[.!?。！？]+$/u, "")
     .trim();
 }
-export function glossKey(term: string, context: string) {
-  return normalizeWord(term) + "\n" + normalizeContext(context);
+export function glossKey(term: string, context: string, language: Language = "id") {
+  return languageKey(language, normalizeWord(term) + "\n" + normalizeContext(context));
 }
-const segmenter = new Intl.Segmenter("id", { granularity: "sentence" });
-export function sentenceContexts(text: string) {
+const segmenters = Object.fromEntries(
+  ["id", "zh-Hans", "en"].map((language) => [
+    language,
+    new Intl.Segmenter(language, { granularity: "sentence" }),
+  ]),
+);
+export function sentenceContexts(text: string, language: Language = "id") {
   // Stable completed sentences keep their keys when more speech arrives afterwards.
   const spans: { text: string; start: number; end: number; complete: boolean }[] = [];
-  for (const part of segmenter.segment(text)) {
-    const tokens = words(part.segment);
+  for (const part of segmenters[language].segment(text)) {
+    const tokens = words(part.segment, language);
     if (!tokens.length) continue;
     // Bound unusually long, unpunctuated speech without cutting individual words.
     for (let i = 0; i < tokens.length; i += 28) {
@@ -55,8 +78,13 @@ export function sentenceContexts(text: string) {
   }
   return spans;
 }
-export function selectionContext(text: string, term: string, index: number) {
-  if (words(text).filter((w) => normalizeWord(w.term) === normalizeWord(term)).length > 1)
+export function selectionContext(
+  text: string,
+  term: string,
+  index: number,
+  language: Language = "id",
+) {
+  if (words(text, language).filter((w) => normalizeWord(w.term) === normalizeWord(term)).length > 1)
     return (
       text.slice(0, index) +
       "⟦" +
@@ -66,13 +94,18 @@ export function selectionContext(text: string, term: string, index: number) {
     ).trim();
   return text.trim();
 }
-export function wordContext(text: string, index: number, spans = sentenceContexts(text)) {
+export function wordContext(
+  text: string,
+  index: number,
+  spans = sentenceContexts(text),
+  language: Language = "id",
+) {
   const span = spans.find((s) => index >= s.start && index < s.end);
   if (!span) return text.slice(Math.max(0, index - 120), index + 200).trim();
   const raw = text.slice(span.start, span.end),
     local = index - span.start;
-  const term = words(raw).find((w) => w.index === local)?.term;
-  return term ? selectionContext(raw, term, local) : span.text;
+  const term = words(raw, language).find((w) => w.index === local)?.term;
+  return term ? selectionContext(raw, term, local, language) : span.text;
 }
 
 // Basic dictionary meanings, not a guess at the meaning in a new sentence.
@@ -116,6 +149,6 @@ export const BASIC_GLOSSES = new Map(
     { annotation: { term, meaning, formal, note: "" }, stable },
   ]),
 );
-export function basicGloss(term: string) {
-  return BASIC_GLOSSES.get(normalizeWord(term));
+export function basicGloss(term: string, language: Language = "id") {
+  return language === "id" ? BASIC_GLOSSES.get(normalizeWord(term)) : undefined;
 }

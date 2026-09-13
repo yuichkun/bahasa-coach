@@ -95,7 +95,9 @@ it.each(["clear", "uncertain"])(
     });
     expect(lesson.rows[0].original).toBe("Aku mau、えっと、deadline 是明天？");
     expect(backend.calls[0]).toContain("TEXT ONLY");
-    expect(backend.calls[0]).toContain("Never correct Japanese/English/Chinese questions");
+    expect(backend.calls[0]).toContain(
+      "Never treat a question in another language as a learner error",
+    );
     expect(lesson.review).toBeNull();
   },
 );

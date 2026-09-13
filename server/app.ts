@@ -1,3 +1,4 @@
+import { directionFor, directionSchema, languageOf, languageSchema } from "../shared/languages.ts";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { z } from "zod";
@@ -36,7 +37,8 @@ export async function createApp(options: {
       if (socket.readyState === 1) socket.send(JSON.stringify(event));
   };
   const live = new LiveManager(store, tutor, () => voiceKey, emit);
-  tutor.glossary.onReady = (update) => emit({ type: "glossary", ...update });
+  for (const glossary of Object.values(tutor.glossaries))
+    glossary.onReady = (update) => emit({ type: "glossary", ...update });
   tutor.speech.onChange = (lesson) => emit({ type: "lesson", lesson });
   tutor.speech.resumePending();
   tutor.recap.onChange = (lesson) => emit({ type: "lesson", lesson });
@@ -201,24 +203,31 @@ export async function createApp(options: {
       suggestion: chosen.natural,
       reason: chosen.explanation,
     });
-    const practice = store.create("writing", "ja-id", chosen.title);
+    const practice = store.create(
+      "writing",
+      directionFor(languageOf(lesson)),
+      chosen.title,
+      languageOf(lesson),
+    );
     store.learning.attach(practice.id, focus.id, "retry");
     return store.get(practice.id);
   });
   app.post("/api/lookup", async (req) => {
-    const { term, context } = z
-      .object({ term: z.string().trim().min(1).max(100), context: z.string().min(1).max(1500) })
+    const { term, context, language } = z
+      .object({
+        term: z.string().trim().min(1).max(100),
+        context: z.string().min(1).max(1500),
+        language: languageSchema.default("id"),
+      })
       .parse(req.body);
-    if (
-      !/^[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*$/u.test(term) ||
-      !context.toLocaleLowerCase().includes(term.toLocaleLowerCase())
-    )
+    if (!words(context, language).some((word) => normalizeWord(word.term) === normalizeWord(term)))
       throw Object.assign(new Error("本文内の単語を選んでください。"), { statusCode: 400 });
-    return tutor.lookup(term, context);
+    return tutor.lookup(term, context, language);
   });
   app.post("/api/glossary/prepare", (req) => {
-    const { requests } = z
+    const { requests, language } = z
       .object({
+        language: languageSchema.default("id"),
         requests: z
           .array(
             z.object({ term: z.string().min(1).max(100), context: z.string().min(1).max(1500) }),
@@ -228,11 +237,12 @@ export async function createApp(options: {
       .parse(req.body);
     if (
       requests.some(
-        (r) => !words(r.context).some((w) => normalizeWord(w.term) === normalizeWord(r.term)),
+        (r) =>
+          !words(r.context, language).some((w) => normalizeWord(w.term) === normalizeWord(r.term)),
       )
     )
       throw Object.assign(new Error("本文内の単語を選んでください。"), { statusCode: 400 });
-    return tutor.glossary.prepare(requests);
+    return tutor.glossaries[language].prepare(requests);
   });
   app.post("/api/practice", (req) => {
     const { focusId, mode, kind } = z
@@ -247,7 +257,7 @@ export async function createApp(options: {
     if (focus.state === "withdrawn") throw new Error("元の回答が変更されています。");
     store.db.exec("BEGIN");
     try {
-      const lesson = store.create(kind, source.direction, source.topic);
+      const lesson = store.create(kind, source.direction, source.topic, languageOf(source));
       store.learning.attach(lesson.id, focusId, mode);
       store.db.exec("COMMIT");
       return store.get(lesson.id);
@@ -274,11 +284,17 @@ export async function createApp(options: {
     const body = z
       .object({
         kind: z.enum(["voice", "writing"]),
-        direction: z.enum(["ja-id", "id-ja"]),
+        direction: directionSchema,
+        language: languageSchema.optional(),
         topic: z.string().trim().max(500),
       })
       .parse(req.body);
-    const lesson = store.create(body.kind, body.direction, body.topic || "仕事の説明");
+    const lesson = store.create(
+      body.kind,
+      body.direction,
+      body.topic || "仕事の説明",
+      body.language,
+    );
     emit({ type: "lesson", lesson });
     return lesson;
   });
@@ -365,7 +381,7 @@ export async function createApp(options: {
     tutor.translator.close();
     tutor.recap.close();
     tutor.speech.close();
-    tutor.glossary.close();
+    for (const glossary of Object.values(tutor.glossaries)) glossary.close();
     await live.stop("server_shutdown");
     for (const c of clients.values()) c.close();
     await backend.close();

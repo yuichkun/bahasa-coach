@@ -67,6 +67,7 @@ export function SpeechNote({
       </p>
       <p className="speech-note-reason">
         <Gloss
+          japanese
           text={result.explanation}
           annotations={result.annotations}
           onOpen={onOpen}

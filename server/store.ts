@@ -15,6 +15,7 @@ import type {
   SpeechFeedback,
 } from "../shared/types.ts";
 import type { RecapState } from "../shared/recap.ts";
+import { directionLanguage, languageSchema, type Language } from "../shared/languages.ts";
 
 type Row = Record<string, any>;
 export class Store {
@@ -35,17 +36,33 @@ export class Store {
       INSERT OR IGNORE INTO voice_segments SELECT provider_id,lesson_id,seconds,confirmed,created_at FROM voice_usage WHERE provider_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS lesson_recaps(lesson_id TEXT PRIMARY KEY REFERENCES lessons(id), source TEXT NOT NULL, status TEXT NOT NULL, data TEXT, error TEXT);
     `);
+    // Existing lessons and all their original transcripts remain Indonesian.
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(lessons)")
+        .all()
+        .some((c) => c.name === "language")
+    )
+      this.db.exec("ALTER TABLE lessons ADD COLUMN language TEXT NOT NULL DEFAULT 'id'");
     this.learning = new LearningStore(this);
     this.learning.init();
   }
-  create(kind: Kind, direction: Direction, topic: string) {
+  create(
+    kind: Kind,
+    direction: Direction,
+    topic: string,
+    language: Language = directionLanguage(direction),
+  ) {
+    languageSchema.parse(language);
+    if (directionLanguage(direction) !== language)
+      throw Object.assign(new Error("学習言語と翻訳の方向が一致しません。"), { statusCode: 400 });
     const id = randomUUID(),
       now = Date.now();
     this.db
       .prepare(
-        "INSERT INTO lessons(id,kind,direction,topic,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO lessons(id,kind,direction,topic,created_at,updated_at,language) VALUES(?,?,?,?,?,?,?)",
       )
-      .run(id, kind, direction, topic, now, now);
+      .run(id, kind, direction, topic, now, now, language);
     return this.get(id);
   }
   get(id: string): Lesson {
@@ -55,6 +72,7 @@ export class Store {
     const rows = this.rows(id);
     return {
       id: r.id,
+      language: languageSchema.parse(r.language),
       kind: r.kind,
       direction: r.direction,
       topic: r.topic,
@@ -87,13 +105,13 @@ export class Store {
       this.db.prepare("SELECT id FROM lessons ORDER BY updated_at DESC LIMIT ?").all(limit) as Row[]
     ).map((r) => this.get(r.id));
   }
-  history(exclude?: string) {
+  history(exclude?: string, language: Language = "id") {
     return (
       this.db
         .prepare(
-          "SELECT id FROM lessons WHERE id != ? AND (status IN ('completed','interrupted') OR EXISTS (SELECT 1 FROM attempts WHERE lesson_id=lessons.id)) ORDER BY updated_at DESC LIMIT 10",
+          "SELECT id FROM lessons WHERE id != ? AND language = ? AND (status IN ('completed','interrupted') OR EXISTS (SELECT 1 FROM attempts WHERE lesson_id=lessons.id)) ORDER BY updated_at DESC LIMIT 10",
         )
-        .all(exclude || "") as Row[]
+        .all(exclude || "", language) as Row[]
     ).map((r) => {
       const l = this.get(r.id);
       return {

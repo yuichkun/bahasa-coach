@@ -7,6 +7,46 @@
   --line: #e6e6e6;
   --accent: #252525;
 }
+.language-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  width: min(100% - 40px, 820px);
+  margin: 12px auto;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+.language-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.language-controls select {
+  max-width: 100%;
+  font-size: 16px;
+}
+.pinyin-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #315e46;
+}
+.pinyin-text {
+  line-height: 2.7;
+}
+.pinyin-text ruby {
+  ruby-align: center;
+  ruby-position: over;
+}
+.pinyin-text rt {
+  font-size: 0.58em;
+  font-weight: 400;
+  color: #43594c;
+  letter-spacing: normal;
+}
+.word-reading {
+  color: #43594c;
+}
 * {
   box-sizing: border-box;
 }
@@ -152,6 +192,11 @@ label textarea {
   background: var(--voice-canvas, #fafafa);
   transition: background-color 220ms ease-out;
 }
+.app[data-view="voice"] {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
 .app::before {
   content: "";
   position: fixed;
@@ -189,8 +234,10 @@ label textarea {
 }
 .app-header {
   height: 66px;
+  width: 100%;
+  flex-shrink: 0;
   max-width: 960px;
-  margin: auto;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 36px;
@@ -243,9 +290,15 @@ main {
 }
 .voice-main {
   padding: 0 30px;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 .voice-pane {
-  height: calc(100dvh - 66px);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -937,9 +990,6 @@ main {
   }
   .voice-main {
     padding: 0 22px;
-  }
-  .voice-pane {
-    height: calc(100dvh - 58px);
   }
   .caption-text {
     font-size: 21px;

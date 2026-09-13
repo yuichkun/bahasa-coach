@@ -259,3 +259,29 @@ it("keeps a paused lesson recoverable if reconnecting fails", async () => {
   expect(store.get(lessonId).status).toBe("paused");
   expect(store.lessonUsage(lessonId)).toBe(62);
 });
+
+it.each(["zh-Hans", "en"] as const)(
+  "uses the %s persona for a voice session and its reconnection",
+  async (language) => {
+    const direction = language === "en" ? "ja-en" : "ja-zh";
+    const lesson = store.create("voice", direction, "自由会話");
+    await live.start("owner", lesson.id, "offer-sdp");
+    const first = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(first.session.instructions).toContain(language === "en" ? "Alex" : "林悦");
+    expect(first.session.instructions).not.toContain("Kamu memerankan Rani");
+    live.fromBrowser("owner", { type: "session.started", event_id: "started" });
+    await live.pause("owner");
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ session: { id: "live_language_resumed" }, transport: { sdp: "answer" } }),
+        { status: 201 },
+      ),
+    );
+    await live.start("owner", lesson.id, "offer-sdp");
+    const next = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(next.session.instructions).toBe(first.session.instructions);
+    expect(next.session.input[0].content[0].text).toContain("Continue the saved conversation");
+    expect(store.get(lesson.id).language).toBe(language);
+  },
+);
