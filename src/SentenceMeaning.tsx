@@ -25,8 +25,6 @@ export function SentenceMeaning({
     value: string;
     precision: TranslationPrecision;
   } | null>(null);
-  const [error, setError] = useState("");
-  const [retry, setRetry] = useState(0);
   const cached = peekTranslation(request, precision);
   const value = cached || (result?.anchor === anchor ? result.value : "");
   const latest = useRef(request);
@@ -37,7 +35,10 @@ export function SentenceMeaning({
   useEffect(() => {
     let alive = true;
     let lease: ReturnType<typeof acquireTranslation> | undefined;
-    setError("");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0,
+      inFlight = false,
+      waiting = false;
     // A preference change applies to pending/new translations, not a full
     // retranslation of every completed caption already on screen.
     if (result?.anchor === anchor && result.precision !== precision) return;
@@ -50,11 +51,39 @@ export function SentenceMeaning({
       return;
     }
     const run = () => {
-      lease = acquireTranslation(latest.current, precision);
-      void lease.promise.then(receive).catch(() => {
-        if (alive) setError("訳を取得できませんでした。");
-      });
+      timer = undefined;
+      if (!alive || inFlight) return;
+      if (navigator.onLine === false) {
+        waiting = true;
+        return;
+      }
+      waiting = false;
+      inFlight = true;
+      const current = acquireTranslation(latest.current, precision);
+      lease = current;
+      void current.promise
+        .then(receive)
+        .catch(() => {
+          if (!alive) return;
+          waiting = true;
+          // Brief failures recover quickly; persistent failures back off without
+          // turning every caption into a button the learner has to manage.
+          const delay = Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5));
+          timer = setTimeout(run, delay);
+        })
+        .finally(() => {
+          inFlight = false;
+          current.release();
+          if (lease === current) lease = undefined;
+        });
     };
+    const resume = () => {
+      if (!alive || inFlight || !waiting) return;
+      if (timer) clearTimeout(timer);
+      failures = 0;
+      timer = setTimeout(run, 150);
+    };
+    window.addEventListener("online", resume);
     const delay = sentenceEnded(request.sentence)
       ? 150
       : precision === "fast"
@@ -62,28 +91,22 @@ export function SentenceMeaning({
         : precision === "balanced"
           ? 700
           : 900;
-    const timer = streaming ? setTimeout(run, delay) : undefined;
+    timer = streaming ? setTimeout(run, delay) : undefined;
     if (!streaming) run();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
       lease?.release();
+      window.removeEventListener("online", resume);
     };
-  }, [effectKey, retry, streaming, precision]);
+  }, [effectKey, streaming, precision]);
   return (
     <p
-      className={`caption-translation${!value && !error ? " is-loading" : ""}`}
+      className={`caption-translation${!value ? " is-loading" : ""}`}
       lang="ja"
       aria-label="日本語訳"
     >
-      {value ||
-        (error ? (
-          <button className="text-button" onClick={() => setRetry((n) => n + 1)}>
-            訳を再取得する
-          </button>
-        ) : (
-          "訳しています…"
-        ))}
+      {value || "訳しています…"}
     </p>
   );
 }

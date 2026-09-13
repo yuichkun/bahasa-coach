@@ -324,3 +324,130 @@ it("keeps finished captions when precision changes rather than requeueing the wh
   expect(screen.getByText("明日来るよ。")).toBeTruthy();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("automatically recovers an interrupted sentence with the latest surrounding conversation", async () => {
+  const request: TranslationRequest = {
+    sentence: "Aku mau",
+    speaker: "assistant",
+    before: context.before,
+    after: [],
+  };
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "temporary failure" }), { status: 500 }),
+    )
+    .mockImplementation(async (_url, options) => {
+      const { requests, precision } = JSON.parse(options!.body as string);
+      return new Response(
+        JSON.stringify({
+          entries: requests.map((r: TranslationRequest) => ({
+            key: translationKey(r, precision),
+            translation: "私は〜したい…",
+          })),
+        }),
+      );
+    });
+  const view = render(<SentenceMeaning request={request} streaming />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(550);
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button")).toBeNull();
+  view.rerender(
+    <SentenceMeaning
+      request={{ ...request, after: [{ role: "user", text: "Sebentar, aku mau mikir." }] }}
+      streaming
+    />,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1100);
+  });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const sent = JSON.parse(fetch.mock.calls[1][1]!.body as string).requests[0];
+  expect(sent.sentence).toBe("Aku mau");
+  expect(sent.before).toEqual(context.before);
+  expect(sent.after[0].text).toBe("Sebentar, aku mau mikir.");
+  expect(screen.getByText("私は〜したい…")).toBeTruthy();
+  expect(screen.queryByRole("button")).toBeNull();
+});
+it("shows successful sentences immediately and retries only omitted translations in their batch", async () => {
+  const first: TranslationRequest = { sentence: "Aku mau", ...context };
+  const second: TranslationRequest = { sentence: "Besok saja.", ...context };
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          entries: [{ key: translationKey(second), translation: "明日にしよう。" }],
+        }),
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ entries: [{ key: translationKey(first), translation: "私は〜したい…" }] }),
+      ),
+    );
+  render(
+    <>
+      <SentenceMeaning request={first} />
+      <SentenceMeaning request={second} />
+    </>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(screen.getByText("明日にしよう。")).toBeTruthy();
+  expect(screen.queryByRole("button")).toBeNull();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1100);
+  });
+  expect(screen.getByText("私は〜したい…")).toBeTruthy();
+  expect(screen.getByText("明日にしよう。")).toBeTruthy();
+  const sent = JSON.parse(fetch.mock.calls[1][1]!.body as string).requests;
+  expect(sent).toEqual([first]);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+it("backs off persistent failures and cancels retries when the sentence is replaced or removed", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+  const first: TranslationRequest = { sentence: "Aku mau", ...context };
+  const view = render(<SentenceMeaning request={first} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4000);
+  });
+  expect(fetch.mock.calls.length).toBeLessThanOrEqual(3);
+  expect(screen.queryByRole("button")).toBeNull();
+  view.rerender(<SentenceMeaning request={{ ...first, sentence: "Aku mau pulang." }} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25);
+  });
+  const callCount = fetch.mock.calls.length;
+  view.unmount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(120_000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(callCount);
+});
+it("resumes automatically when connectivity returns and does not request while offline", async () => {
+  const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  const r: TranslationRequest = { sentence: "Besok saja.", ...context };
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({ entries: [{ key: translationKey(r), translation: "明日にしよう。" }] }),
+      ),
+    );
+  render(<SentenceMeaning request={r} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  online.mockReturnValue(true);
+  fireEvent(window, new Event("online"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(200);
+  });
+  expect(screen.getByText("明日にしよう。")).toBeTruthy();
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

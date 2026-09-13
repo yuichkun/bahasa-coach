@@ -122,7 +122,10 @@ async function flush(precision: TranslationPrecision, version: number) {
       if (version !== generation) return;
       for (const [key, job] of batch) {
         const value = result.entries?.find((e) => e.key === key)?.translation;
-        if (!value?.trim()) throw new Error("文の訳を取得できませんでした。");
+        if (!value?.trim()) {
+          job.reject(new Error("文の訳を取得できませんでした。"));
+          continue;
+        }
         cache.set(key, value);
         job.resolve(value);
       }

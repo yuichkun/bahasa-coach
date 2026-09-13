@@ -176,3 +176,32 @@ it("saves the translation precision setting without exposing model or effort sel
   expect(invalid.statusCode).toBe(400);
   expect(context.tutor.translator.precision).toBe("precise");
 });
+
+it("returns successful sentence translations when another target was omitted", async () => {
+  backend.result = { entries: [{ id: "1", translation: "明日にしよう。" }] };
+  const response = await context.app.inject({
+    method: "POST",
+    url: "/api/translations",
+    headers,
+    payload: {
+      requests: [
+        { sentence: "Aku mau", speaker: "assistant", before: [], after: [] },
+        { sentence: "Besok saja.", speaker: "assistant", before: [], after: [] },
+      ],
+    },
+  });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().entries).toHaveLength(1);
+  expect(response.json().entries[0].translation).toBe("明日にしよう。");
+});
+it("keeps the provider error when all requested translations fail", async () => {
+  backend.failure = new Error("provider unavailable");
+  const response = await context.app.inject({
+    method: "POST",
+    url: "/api/translations",
+    headers,
+    payload: { requests: [{ sentence: "Aku mau", speaker: "assistant", before: [], after: [] }] },
+  });
+  expect(response.statusCode).toBe(500);
+  expect(response.json().error).toBe("provider unavailable");
+});

@@ -134,9 +134,17 @@ export async function createApp(options: {
         precision: translationPrecisionSchema.optional(),
       })
       .parse(req.body);
-    return {
-      entries: await Promise.all(requests.map((r) => tutor.translator.translate(r, precision))),
-    };
+    const results = await Promise.allSettled(
+      requests.map((r) => tutor.translator.translate(r, precision)),
+    );
+    const entries = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    // A missing translation must not hide the successful sentences in its batch.
+    // Preserve the original error when the whole request failed (for example auth).
+    const failure = results.find((result) => result.status === "rejected");
+    if (!entries.length && failure) throw failure.reason;
+    return { entries };
   });
   app.post("/api/auth/login", () => backend.login());
   app.post("/api/auth/logout", async () => {

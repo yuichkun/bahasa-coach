@@ -44,6 +44,7 @@ export class CodexBackend implements TutorBackend {
   private feedbackQueue: Promise<unknown> = Promise.resolve();
   private recapQueue: Promise<unknown> = Promise.resolve();
   private translationQueues = new Map<TranslationPrecision, Promise<unknown>>();
+  private unavailableModels = new Map<string, number>();
   private catalog: { expires: number; promise: Promise<AvailableModel[]> } | null = null;
   private loginPending = false;
   private loginError: string | null = null;
@@ -197,6 +198,7 @@ export class CodexBackend implements TutorBackend {
     await this.rpc("account/logout", {});
     this.loginPending = false;
     this.catalog = null;
+    this.unavailableModels.clear();
   }
   async availableModels(): Promise<AvailableModel[]> {
     await this.start();
@@ -265,7 +267,11 @@ export class CodexBackend implements TutorBackend {
     else this.queue = task.catch(() => {});
     return task;
   }
-  private async run(prompt: string, schema: Json, precision?: TranslationPrecision) {
+  private async run(
+    prompt: string,
+    schema: Json,
+    precision?: TranslationPrecision,
+  ): Promise<unknown> {
     await this.start();
     const account = await this.status();
     if (!account.connected)
@@ -275,11 +281,45 @@ export class CodexBackend implements TutorBackend {
         ),
         { statusCode: 401 },
       );
-    const models = await this.availableModels();
+    const catalog = await this.availableModels();
+    const models =
+      precision === "fast"
+        ? catalog.filter(
+            (model) =>
+              (model === (catalog.find((candidate) => candidate.isDefault) || catalog[0]) ||
+                ["gpt-5.3-codex-spark", "gpt-5.6-luna"].includes(model.model)) &&
+              (this.unavailableModels.get(model.model) || 0) <= Date.now(),
+          )
+        : catalog;
+    if (!models.length)
+      throw Object.assign(
+        new Error("字幕用モデルの利用再開を待っています。翻訳は自動で再試行します。"),
+        { statusCode: 429 },
+      );
     const selected = precision ? selectTranslationModel(models, precision) : null;
     const model = selected?.model || models.find((m) => m.isDefault);
     if (!model)
       throw new Error("アカウントの既定モデルを取得できませんでした。再接続してください。");
+    try {
+      return await this.runModel(prompt, schema, model, selected?.effort);
+    } catch (error) {
+      const usageLimit =
+        error instanceof Error &&
+        (("codexErrorInfo" in error && error.codexErrorInfo === "usageLimitExceeded") ||
+          /hit your usage limit/i.test(error.message));
+      if (precision !== "fast" || !usageLimit) throw error;
+      // Only try other models in the same authenticated subscription catalog.
+      // Cool down the exhausted model across subsequent caption/dictionary jobs.
+      this.unavailableModels.set(model.model, Date.now() + 15 * 60_000);
+      return this.run(prompt, schema, precision);
+    }
+  }
+  private async runModel(
+    prompt: string,
+    schema: Json,
+    model: AvailableModel,
+    selectedEffort?: string,
+  ) {
     const thread = await this.rpc("thread/start", {
       model: model.model,
       ephemeral: true,
@@ -311,8 +351,12 @@ export class CodexBackend implements TutorBackend {
           const turn = msg.params.turn;
           if (turn.status !== "completed") {
             fail(
-              new Error(
-                turn.error?.message || "文章の処理を完了できませんでした。入力は保存されています。",
+              Object.assign(
+                new Error(
+                  turn.error?.message ||
+                    "文章の処理を完了できませんでした。入力は保存されています。",
+                ),
+                { codexErrorInfo: turn.error?.codexErrorInfo },
               ),
             );
             return;
@@ -341,7 +385,7 @@ export class CodexBackend implements TutorBackend {
       this.events.on("notification", receive);
       this.events.once("disconnected", fail);
       const effort =
-        selected?.effort ||
+        selectedEffort ||
         (model.supportedReasoningEfforts?.some((x: Json) => x.reasoningEffort === "low")
           ? "low"
           : model.defaultReasoningEffort);
