@@ -258,6 +258,7 @@ export function Gloss({
   annotations = EMPTY_ANNOTATIONS,
   prefetch = true,
   streaming = false,
+  highlight = "",
   onInspect,
   onOpen,
 }: {
@@ -265,6 +266,7 @@ export function Gloss({
   annotations?: Annotation[];
   prefetch?: boolean;
   streaming?: boolean;
+  highlight?: string;
   onInspect?: () => void;
   onOpen?: () => void;
 }) {
@@ -289,6 +291,20 @@ export function Gloss({
       .map((a) => [a.term.toLocaleLowerCase("id"), a]),
   );
   const result: ReactNode[] = [];
+  const highlightStart = highlight ? text.indexOf(highlight) : -1;
+  const paint = (value: string, offset: number) => {
+    const start = Math.max(0, highlightStart - offset);
+    const end = Math.min(value.length, highlightStart + highlight.length - offset);
+    return highlightStart >= 0 && end > start ? (
+      <>
+        {value.slice(0, start)}
+        <mark>{value.slice(start, end)}</mark>
+        {value.slice(end)}
+      </>
+    ) : (
+      value
+    );
+  };
   let cursor = 0;
   for (const match of text.matchAll(
     /[\p{Script=Latin}\p{M}]+(?:[-’'][\p{Script=Latin}\p{M}]+)*/gu,
@@ -296,7 +312,7 @@ export function Gloss({
     const index = match.index,
       term = match[0];
     if (index > cursor)
-      result.push(<span key={`text-${cursor}`}>{text.slice(cursor, index)}</span>);
+      result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor, index), cursor)}</span>);
     const context = wordContext(text, index, spans);
     const open = (anchor: HTMLElement, immediately = false) => {
       controller?.offer(
@@ -327,11 +343,12 @@ export function Gloss({
         }}
         onClick={(e) => open(e.currentTarget, true)}
       >
-        {term}
+        {paint(term, index)}
       </button>,
     );
     cursor = index + term.length;
   }
-  if (cursor < text.length) result.push(<span key={`text-${cursor}`}>{text.slice(cursor)}</span>);
+  if (cursor < text.length)
+    result.push(<span key={`text-${cursor}`}>{paint(text.slice(cursor), cursor)}</span>);
   return <>{result}</>;
 }

@@ -1,0 +1,384 @@
+.recap-main {
+  max-width: none;
+  padding: 0 28px 64px;
+  background: #fbf8f0;
+  min-height: calc(100dvh - 66px);
+}
+.recap-page {
+  max-width: 1080px;
+  margin: 0 auto;
+  color: #30382f;
+}
+.recap-navigation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 0;
+  font-size: 13px;
+  color: #686b5e;
+}
+.recap-navigation button {
+  padding-left: 0;
+}
+.recap-header {
+  margin-left: 208px;
+  padding: 24px 0 34px;
+  border-bottom: 1px solid #dedbcb;
+}
+.recap-header h1 {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.55;
+  letter-spacing: -0.025em;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+.recap-header p {
+  font-size: 17px;
+  line-height: 1.95;
+  color: #59604f;
+  margin: 0;
+  white-space: pre-line;
+}
+.recap-layout {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+}
+.recap-contents {
+  position: sticky;
+  top: 24px;
+  padding-top: 36px;
+}
+.recap-contents p {
+  font-size: 13px;
+  color: #707360;
+  padding: 0 8px;
+}
+.recap-contents button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  justify-content: start;
+  padding: 10px 8px;
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #576247;
+}
+.recap-contents button:hover {
+  background: #eeeeda;
+}
+.recap-notebook {
+  min-width: 0;
+}
+.recap-section {
+  padding-top: 36px;
+  scroll-margin-top: 24px;
+}
+.recap-section > h2 {
+  font-size: 23px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+.recap-topic-summary {
+  font-size: 15px;
+  line-height: 1.9;
+  margin: 0 0 18px;
+  color: #606854;
+  white-space: pre-line;
+}
+.recap-point {
+  padding: 24px 0 28px;
+  border-bottom: 1px dashed #d9d9c8;
+}
+.recap-point h3 {
+  font-size: 19px;
+  padding: 0;
+  margin: 0 0 18px;
+  line-height: 1.65;
+  font-weight: 600;
+}
+.recap-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 20px;
+  align-items: start;
+}
+.recap-original,
+.recap-natural {
+  min-width: 0;
+}
+.recap-original > span,
+.recap-natural > span {
+  font-size: 12px;
+  display: block;
+  margin-bottom: 8px;
+  color: #707162;
+}
+.recap-original > p {
+  font-size: 17px;
+  line-height: 1.8;
+  color: #6b6d61;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.recap-natural > p {
+  font-size: 20px;
+  line-height: 1.8;
+  color: #344f32;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.recap-page mark {
+  background: #ffe7a0;
+  color: inherit;
+  border-radius: 3px;
+  padding: 1px 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.recap-point.worked mark {
+  background: #dcebbf;
+}
+.recap-original mark {
+  background: #efe4cf;
+}
+.recap-teaching {
+  margin: 20px 0;
+  padding: 16px 20px;
+  background: #f1eddc;
+  border-radius: 8px;
+}
+.recap-teaching > strong {
+  color: #79703b;
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.recap-teaching p {
+  font-size: 15px;
+  line-height: 1.95;
+  white-space: pre-line;
+  margin: 0;
+}
+.recap-examples {
+  padding: 0 20px;
+}
+.recap-examples h4 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #606c51;
+  margin: 0 0 14px;
+}
+.recap-examples > div {
+  margin-bottom: 14px;
+}
+.recap-examples p {
+  font-size: 17px;
+  line-height: 1.85;
+  margin: 0 0 3px;
+}
+.recap-examples .recap-meaning {
+  font-size: 13px;
+  color: #686d60;
+}
+.recap-point-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+  font-size: 12px;
+  color: #666e5d;
+}
+.recap-point-actions summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.recap-point-actions button {
+  font-size: 12px;
+  padding-right: 0;
+  color: #40613c;
+}
+.recap-source-context {
+  max-width: 65ch;
+  padding: 16px 0;
+}
+.recap-source-context p {
+  line-height: 1.8;
+  margin: 0 0 12px;
+}
+.recap-source-context small {
+  display: block;
+  color: #737968;
+}
+.recap-next {
+  margin-top: 40px;
+  padding: 24px 28px;
+  border-radius: 10px;
+  background: #eaf0df;
+  scroll-margin-top: 24px;
+}
+.recap-next h2 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.recap-next p {
+  font-size: 14px;
+  line-height: 1.95;
+  margin: 10px 0 0;
+}
+.recap-next .recap-next-prompt {
+  font-size: 17px;
+  font-weight: 500;
+}
+.recap-closing {
+  padding: 26px 2px 0;
+  color: #626c55;
+  font-size: 15px;
+  line-height: 1.9;
+  white-space: pre-line;
+}
+.recap-loading {
+  max-width: 680px;
+  margin: 48px 0 0 208px;
+}
+.recap-loading h2 {
+  font-size: 20px;
+}
+.recap-loading p {
+  line-height: 1.9;
+  font-size: 15px;
+  color: #626954;
+}
+.recap-error {
+  color: #854c39;
+}
+.recap-skeleton {
+  padding: 24px 0;
+}
+.recap-skeleton span {
+  display: block;
+  height: 14px;
+  background: #eae8dc;
+  border-radius: 4px;
+  margin: 0 0 18px;
+}
+.recap-skeleton span:nth-child(2) {
+  width: 84%;
+}
+.recap-skeleton span:nth-child(3) {
+  width: 63%;
+}
+.mic-with-pause {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.think-button {
+  font-size: 12px;
+  padding: 7px 12px;
+  border-color: #d4dacb;
+  color: #526247;
+}
+.mute-cost-note {
+  font-size: 10px;
+  color: #737263;
+  max-width: 170px;
+  text-align: center;
+}
+.thinking-break {
+  width: 100%;
+  padding: 10px 0;
+}
+.thinking-break h2 {
+  font-size: 19px;
+  margin: 0 0 10px;
+}
+.thinking-break p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #536347;
+  margin: 0 0 14px;
+}
+.thinking-break > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.thinking-break small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #727667;
+  margin-top: 12px;
+}
+@media (max-width: 760px) {
+  .recap-main {
+    padding: 0 22px 40px;
+  }
+  .recap-header {
+    margin-left: 0;
+    padding-top: 16px;
+  }
+  .recap-header h1 {
+    font-size: 26px;
+  }
+  .recap-header p {
+    font-size: 16px;
+  }
+  .recap-layout {
+    display: block;
+  }
+  .recap-contents {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding-top: 18px;
+  }
+  .recap-contents p {
+    flex: 0 0 100%;
+    padding: 0;
+    margin-bottom: 3px;
+  }
+  .recap-contents button {
+    width: auto;
+    padding: 5px 0;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .recap-section {
+    padding-top: 28px;
+  }
+  .recap-comparison {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .recap-teaching {
+    padding: 16px;
+  }
+  .recap-examples {
+    padding: 0 8px;
+  }
+  .recap-next {
+    padding: 22px 20px;
+  }
+  .recap-loading {
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recap-page {
+    scroll-behavior: auto;
+  }
+}

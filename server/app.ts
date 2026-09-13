@@ -37,6 +37,8 @@ export async function createApp(options: {
   tutor.glossary.onReady = (update) => emit({ type: "glossary", ...update });
   tutor.speech.onChange = (lesson) => emit({ type: "lesson", lesson });
   tutor.speech.resumePending();
+  tutor.recap.onChange = (lesson) => emit({ type: "lesson", lesson });
+  tutor.recap.resumePending();
   const status = async (): Promise<AppStatus> => {
     const u = store.monthUsage();
     return {
@@ -140,6 +142,42 @@ export async function createApp(options: {
   });
   app.get("/api/lessons", () => store.list());
   app.get("/api/lessons/:id", (req) => store.get((req.params as { id: string }).id));
+  app.post("/api/lessons/:id/recap", (req) => {
+    const { retry = false } = z.object({ retry: z.boolean().optional() }).parse(req.body);
+    return tutor.recap.ensure((req.params as { id: string }).id, retry);
+  });
+  app.post("/api/lessons/:id/finish", (req) => {
+    const id = (req.params as { id: string }).id;
+    if (live.info()?.lessonId === id)
+      throw Object.assign(new Error("音声接続を終了してください。"), { statusCode: 409 });
+    const lesson = store.get(id);
+    if (lesson.kind !== "voice") throw new Error("会話のレッスンを指定してください。");
+    store.status(id, "completed");
+    const updated = tutor.recap.ensure(id);
+    emit({ type: "lesson", lesson: updated });
+    return updated;
+  });
+  app.post("/api/lessons/:id/recap/practice", (req) => {
+    const { section, point } = z
+      .object({ section: z.number().int().nonnegative(), point: z.number().int().nonnegative() })
+      .parse(req.body);
+    const id = (req.params as { id: string }).id;
+    const lesson = tutor.recap.ensure(id);
+    const chosen =
+      lesson.recap?.status === "ready" ? lesson.recap.data?.sections[section]?.points[point] : null;
+    if (!chosen) throw new Error("レッスンノートが更新されました。読み込み直してください。");
+    const source = lesson.rows.find((r) => r.id === chosen.sourceId);
+    if (chosen.kind !== "adjust" || source?.role !== "user")
+      throw new Error("言い直す表現を選んでください。");
+    const focus = store.learning.createFocus(id, {
+      original: chosen.quote,
+      suggestion: chosen.natural,
+      reason: chosen.explanation,
+    });
+    const practice = store.create("writing", "ja-id", chosen.title);
+    store.learning.attach(practice.id, focus.id, "retry");
+    return store.get(practice.id);
+  });
   app.post("/api/lookup", async (req) => {
     const { term, context } = z
       .object({ term: z.string().trim().min(1).max(100), context: z.string().min(1).max(1500) })
@@ -299,7 +337,12 @@ export async function createApp(options: {
     await live.stop();
     return { ok: true };
   });
+  app.post("/api/live/pause", async (req) => {
+    const { owner } = z.object({ owner: z.string().uuid() }).parse(req.body);
+    return live.pause(owner);
+  });
   app.addHook("onClose", async () => {
+    tutor.recap.close();
     tutor.speech.close();
     tutor.glossary.close();
     await live.stop("server_shutdown");

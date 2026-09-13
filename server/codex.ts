@@ -10,7 +10,7 @@ export interface TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean },
+    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean; recap?: boolean },
   ): Promise<unknown>;
   status(): Promise<AppStatus["chatgpt"]>;
   login(): Promise<{ authUrl: string }>;
@@ -30,6 +30,7 @@ export class CodexBackend implements TutorBackend {
   private lookupQueue: Promise<unknown> = Promise.resolve();
   private prefetchQueue: Promise<unknown> = Promise.resolve();
   private feedbackQueue: Promise<unknown> = Promise.resolve();
+  private recapQueue: Promise<unknown> = Promise.resolve();
   private loginPending = false;
   private loginError: string | null = null;
   private dataDir: string;
@@ -184,18 +185,21 @@ export class CodexBackend implements TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean },
+    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean; recap?: boolean },
   ): Promise<unknown> {
     const task = (
-      options?.feedback
-        ? this.feedbackQueue
-        : options?.prefetch
-          ? this.prefetchQueue
-          : options?.interactive
-            ? this.lookupQueue
-            : this.queue
+      options?.recap
+        ? this.recapQueue
+        : options?.feedback
+          ? this.feedbackQueue
+          : options?.prefetch
+            ? this.prefetchQueue
+            : options?.interactive
+              ? this.lookupQueue
+              : this.queue
     ).then(() => this.run(prompt, schema));
-    if (options?.feedback) this.feedbackQueue = task.catch(() => {});
+    if (options?.recap) this.recapQueue = task.catch(() => {});
+    else if (options?.feedback) this.feedbackQueue = task.catch(() => {});
     else if (options?.prefetch) this.prefetchQueue = task.catch(() => {});
     else if (options?.interactive) this.lookupQueue = task.catch(() => {});
     else this.queue = task.catch(() => {});

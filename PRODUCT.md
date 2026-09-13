@@ -40,4 +40,4 @@ Japanese UI, clear reading widths, keyboard-accessible annotations, visible focu
 
 ## Current learning flow
 
-Free voice conversation starts without an exercise. Provide contextual word lookup and up to three short reply examples. Review is opt-in for free conversation. Practice one grounded improvement, check a fresh learner answer, distinguish help use, then test in a different situation. No unsupported mastery scores.
+Free voice conversation starts without an exercise. Provide contextual word lookup and up to three short reply examples. Every completed voice conversation automatically opens a dedicated whole-lesson recap. Thinking breaks close the voice connection and can resume the same lesson without losing captions or hints. Practice one grounded improvement, check a fresh learner answer, distinguish help use, then test in a different situation. No unsupported mastery scores.

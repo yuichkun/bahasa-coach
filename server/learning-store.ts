@@ -93,6 +93,21 @@ export class LearningStore {
       )
       .run(lessonId, status, focusId);
   }
+  createFocus(lessonId: string, point: Feedback["points"][number]) {
+    const prior = this.store.db
+      .prepare(
+        "SELECT id FROM practice_focus WHERE source_lesson_id=? AND original=? AND suggestion=? AND state<>'withdrawn' LIMIT 1",
+      )
+      .get(lessonId, point.original, point.suggestion);
+    if (prior) return this.focus(String(prior.id));
+    const id = randomUUID();
+    this.store.db
+      .prepare(
+        "INSERT INTO practice_focus(id,source_lesson_id,original,suggestion,reason,created_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(id, lessonId, point.original, point.suggestion, point.reason, Date.now());
+    return this.focus(id);
+  }
   attach(lessonId: string, focusId: string, mode: "retry" | "transfer") {
     const focus = this.focus(focusId);
     if (focus.state === "withdrawn")

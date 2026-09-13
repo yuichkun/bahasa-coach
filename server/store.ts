@@ -14,6 +14,7 @@ import type {
   TranscriptRow,
   SpeechFeedback,
 } from "../shared/types.ts";
+import type { RecapState } from "../shared/recap.ts";
 
 type Row = Record<string, any>;
 export class Store {
@@ -30,6 +31,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY AUTOINCREMENT, row_id TEXT NOT NULL REFERENCES transcript_rows(id), original TEXT NOT NULL, corrected TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS voice_usage(lesson_id TEXT PRIMARY KEY REFERENCES lessons(id), provider_id TEXT, seconds REAL NOT NULL DEFAULT 0, confirmed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS speech_feedback(lesson_id TEXT NOT NULL REFERENCES lessons(id), block_id TEXT NOT NULL, source TEXT NOT NULL, result TEXT, status TEXT NOT NULL, PRIMARY KEY(lesson_id,block_id));
+      CREATE TABLE IF NOT EXISTS voice_segments(provider_id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL REFERENCES lessons(id), seconds REAL NOT NULL DEFAULT 15, confirmed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+      INSERT OR IGNORE INTO voice_segments SELECT provider_id,lesson_id,seconds,confirmed,created_at FROM voice_usage WHERE provider_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS lesson_recaps(lesson_id TEXT PRIMARY KEY REFERENCES lessons(id), source TEXT NOT NULL, status TEXT NOT NULL, data TEXT, error TEXT);
     `);
     this.learning = new LearningStore(this);
     this.learning.init();
@@ -62,6 +66,8 @@ export class Store {
       updatedAt: r.updated_at,
       rows,
       speechFeedback: this.speechFeedback(id, rows),
+      recap: this.recap(id),
+      voiceSeconds: this.lessonUsage(id),
       review: this.learning.review(id),
       practice: this.learning.practice(id),
       attempts: (
@@ -98,6 +104,7 @@ export class Store {
         feedback: l.attempts[0]?.feedback,
         practice: l.practice,
         review: l.review,
+        recap: l.recap?.data,
         speechFeedback: l.speechFeedback?.filter((f) => f.result?.outcome === "correction"),
         conversation: transcriptBlocks(l.rows)
           .slice(-15)
@@ -196,7 +203,14 @@ export class Store {
   }
   fragment(
     lessonId: string,
-    e: { event_id: string; delta: string; start_ms: number; end_ms: number; type: string },
+    e: {
+      event_id: string;
+      delta: string;
+      start_ms: number;
+      end_ms: number;
+      type: string;
+      segment_start_ms?: number;
+    },
   ) {
     if (
       this.db
@@ -208,9 +222,16 @@ export class Store {
     // Display grouping is revisable; it never completes a semantic turn or triggers a tool.
     let row = this.db
       .prepare(
-        "SELECT * FROM transcript_rows WHERE lesson_id=? AND role=? AND start_ms<=? AND end_ms>=? ORDER BY ABS(end_ms-?) LIMIT 1",
+        "SELECT * FROM transcript_rows WHERE lesson_id=? AND role=? AND start_ms<=? AND end_ms>=? AND start_ms>=? ORDER BY ABS(end_ms-?) LIMIT 1",
       )
-      .get(lessonId, role, e.end_ms + 1400, e.start_ms - 1400, e.start_ms) as Row | undefined;
+      .get(
+        lessonId,
+        role,
+        e.end_ms + 1400,
+        e.start_ms - 1400,
+        e.segment_start_ms ?? 0,
+        e.start_ms,
+      ) as Row | undefined;
     if (
       row &&
       role === "assistant" &&
@@ -270,16 +291,27 @@ export class Store {
   }
   usageStart(id: string, providerId: string) {
     this.db
-      .prepare("INSERT INTO voice_usage(lesson_id,provider_id,seconds,created_at) VALUES(?,?,15,?)")
-      .run(id, providerId, Date.now());
+      .prepare(
+        "INSERT OR IGNORE INTO voice_segments(provider_id,lesson_id,seconds,created_at) VALUES(?,?,15,?)",
+      )
+      .run(providerId, id, Date.now());
   }
-  usage(id: string, seconds: number, final = false) {
+  usage(id: string, seconds: number, final = false, providerId?: string) {
     if (!Number.isFinite(seconds) || seconds < 0) return;
+    seconds = Math.max(15, seconds);
+    providerId ??= (
+      this.db
+        .prepare(
+          "SELECT provider_id FROM voice_segments WHERE lesson_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+        )
+        .get(id) as { provider_id: string } | undefined
+    )?.provider_id;
+    if (!providerId) return;
     this.db
       .prepare(
-        "UPDATE voice_usage SET seconds=CASE WHEN ? THEN ? ELSE MAX(seconds,?) END,confirmed=MAX(confirmed,?) WHERE lesson_id=? AND (confirmed=0 OR ?=1)",
+        "UPDATE voice_segments SET seconds=CASE WHEN ? THEN ? ELSE MAX(seconds,?) END,confirmed=MAX(confirmed,?) WHERE lesson_id=? AND provider_id=? AND (confirmed=0 OR ?=1)",
       )
-      .run(final ? 1 : 0, seconds, seconds, final ? 1 : 0, id, final ? 1 : 0);
+      .run(final ? 1 : 0, seconds, seconds, final ? 1 : 0, id, providerId, final ? 1 : 0);
   }
   monthUsage() {
     const d = new Date();
@@ -287,13 +319,35 @@ export class Store {
     d.setHours(0, 0, 0, 0);
     const r = this.db
       .prepare(
-        "SELECT COALESCE(SUM(seconds),0) AS seconds,COUNT(CASE WHEN confirmed=0 THEN 1 END) AS unconfirmed FROM voice_usage WHERE created_at>=?",
+        "SELECT COALESCE(SUM(seconds),0) AS seconds,COUNT(CASE WHEN confirmed=0 THEN 1 END) AS unconfirmed FROM voice_segments WHERE created_at>=?",
       )
       .get(d.getTime()) as Row;
     return r as { seconds: number; unconfirmed: number };
   }
   recover() {
     this.db.prepare("UPDATE lessons SET status='interrupted' WHERE status='active'").run();
+  }
+  lessonUsage(id: string): number {
+    return Number(
+      this.db
+        .prepare("SELECT COALESCE(SUM(seconds),0) AS seconds FROM voice_segments WHERE lesson_id=?")
+        .get(id)!.seconds,
+    );
+  }
+  recap(id: string): RecapState | null {
+    const r = this.db.prepare("SELECT * FROM lesson_recaps WHERE lesson_id=?").get(id) as
+      | Row
+      | undefined;
+    return r
+      ? { status: r.status, data: r.data ? JSON.parse(r.data) : null, error: r.error }
+      : null;
+  }
+  saveRecap(id: string, source: string, state: RecapState) {
+    this.db
+      .prepare(
+        `INSERT INTO lesson_recaps VALUES(?,?,?,?,?) ON CONFLICT(lesson_id) DO UPDATE SET source=excluded.source,status=excluded.status,data=excluded.data,error=excluded.error`,
+      )
+      .run(id, source, state.status, state.data ? JSON.stringify(state.data) : null, state.error);
   }
   close() {
     this.db.close();

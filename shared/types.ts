@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { GlossUpdate } from "./glossary.ts";
+import type { RecapState } from "./recap.ts";
 
 export const annotationSchema = z.object({
   term: z.string(),
@@ -83,12 +84,14 @@ export interface Lesson {
   title: string;
   exercise: Exercise | null;
   draft: string;
-  status: "draft" | "active" | "completed" | "interrupted";
+  status: "draft" | "active" | "paused" | "completed" | "interrupted";
   createdAt: number;
   updatedAt: number;
   rows: TranscriptRow[];
   attempts: Attempt[];
   speechFeedback?: SpeechFeedback[];
+  recap?: RecapState | null;
+  voiceSeconds?: number;
   review?: {
     status: "ready" | "clear" | "uncertain" | "stale";
     focus: PracticeFocus | null;
@@ -108,6 +111,7 @@ export interface LiveInfo {
   status: "connecting" | "active" | "closing";
   seconds: number;
   startedAt: number;
+  baseSeconds?: number;
 }
 export interface AppStatus {
   chatgpt: {

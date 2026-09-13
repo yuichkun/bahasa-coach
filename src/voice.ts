@@ -95,6 +95,13 @@ export class VoiceClient {
       this.cleanup();
     }
   }
+  async pause() {
+    // Keep the channel alive until final usage is received, just like normal end.
+    const lesson = await api("/live/pause", { owner: this.owner });
+    this.cancelled = true;
+    this.cleanup();
+    return lesson;
+  }
   cleanup() {
     this.cancelled = true;
     this.channel?.close();

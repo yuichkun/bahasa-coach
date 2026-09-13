@@ -3,7 +3,7 @@ import { Store } from "./store.ts";
 import { Tutor } from "./tutor.ts";
 import { FakeBackend } from "./fixtures.test-helper.ts";
 import type { AppEvent } from "../shared/types.ts";
-const control = vi.hoisted(() => ({ sent: vi.fn(), acknowledge: true }));
+const control = vi.hoisted(() => ({ sent: vi.fn(), acknowledge: true, closeAcknowledged: true }));
 
 vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
@@ -32,7 +32,7 @@ vi.mock("ws", async () => {
             ),
           ),
         );
-      if (e.type === "session.close")
+      if (e.type === "session.close" && control.closeAcknowledged)
         queueMicrotask(() =>
           this.emit(
             "message",
@@ -64,6 +64,7 @@ let store: Store,
 beforeEach(() => {
   control.sent.mockClear();
   control.acknowledge = true;
+  control.closeAcknowledged = true;
   store = new Store(":memory:");
   lessonId = store.create("voice", "ja-id", "仕事").id;
   events = [];
@@ -84,6 +85,7 @@ beforeEach(() => {
     );
 });
 afterEach(async () => {
+  tutor.recap.close();
   tutor.speech.close();
   await live.stop();
   store.close();
@@ -270,4 +272,90 @@ describe("Live lifecycle", () => {
     expect(store.get(lessonId).topic).toBe("仕事");
     expect(store.monthUsage().seconds).toBe(0);
   });
+});
+
+it("closes for a thinking break, preserves the lesson and resumes with context and separate billing", async () => {
+  const ensure = vi.spyOn(tutor.recap, "ensure");
+  await live.start("owner", lessonId, "sdp");
+  live.fromBrowser("owner", { type: "session.started", event_id: "started" });
+  live.fromBrowser("owner", {
+    type: "session.input_transcript.delta",
+    event_id: "user",
+    delta: "Aku lagi kerja.",
+    start_ms: 0,
+    end_ms: 900,
+  });
+  live.fromBrowser("owner", {
+    type: "session.output_transcript.delta",
+    event_id: "coach",
+    delta: "Kerja apa?",
+    start_ms: 1100,
+    end_ms: 1800,
+  });
+  const before = store.rows(lessonId);
+  await live.pause("owner");
+  expect(live.info()).toBeNull();
+  expect(store.get(lessonId).status).toBe("paused");
+  expect(store.rows(lessonId)).toEqual(before);
+  expect(store.lessonUsage(lessonId)).toBe(62);
+  expect(ensure).not.toHaveBeenCalled();
+  expect(
+    events.some(
+      (e) => e.type === "live" && e.event.type === "session.closed" && e.event.paused === true,
+    ),
+  ).toBe(true);
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({ session: { id: "live_resumed" }, transport: { sdp: "answer" } }),
+      { status: 201 },
+    ),
+  );
+  await live.start("owner", lessonId, "sdp2");
+  const request = JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body));
+  expect(
+    request.session.input.some(
+      (m: any) => m.role === "user" && m.content[0].text === "Aku lagi kerja.",
+    ),
+  ).toBe(true);
+  expect(
+    request.session.input.some(
+      (m: any) => m.role === "assistant" && m.content[0].text === "Kerja apa?",
+    ),
+  ).toBe(true);
+  live.fromBrowser("owner", {
+    type: "session.input_transcript.delta",
+    event_id: "user",
+    delta: "Aku bikin aplikasi.",
+    start_ms: 0,
+    end_ms: 700,
+  });
+  expect(store.rows(lessonId).at(-1)!.startMs).toBeGreaterThan(1800);
+  expect(store.rows(lessonId).at(-1)!.original).toBe("Aku bikin aplikasi.");
+  expect(live.info()?.seconds).toBe(77);
+  await live.stop();
+  expect(store.lessonUsage(lessonId)).toBe(124);
+  expect(store.monthUsage().seconds).toBe(124);
+  expect(ensure).toHaveBeenCalledOnce();
+});
+it("does not report a free thinking break when the provider cannot confirm closure", async () => {
+  await live.start("owner", lessonId, "sdp");
+  live.fromBrowser("owner", { type: "session.started", event_id: "started" });
+  vi.useFakeTimers();
+  control.closeAcknowledged = false;
+  fetchMock.mockRejectedValueOnce(new Error("network unavailable"));
+  const failure = expect(live.pause("owner")).rejects.toThrow("network unavailable");
+  await vi.advanceTimersByTimeAsync(6100);
+  await failure;
+  expect(store.get(lessonId).status).toBe("active");
+  expect(live.info()).not.toBeNull();
+  control.closeAcknowledged = true;
+});
+it("keeps a paused lesson recoverable if reconnecting fails", async () => {
+  await live.start("owner", lessonId, "sdp");
+  live.fromBrowser("owner", { type: "session.started", event_id: "started" });
+  await live.pause("owner");
+  fetchMock.mockRejectedValueOnce(new Error("offline"));
+  await expect(live.start("owner", lessonId, "sdp2")).rejects.toThrow("offline");
+  expect(store.get(lessonId).status).toBe("paused");
+  expect(store.lessonUsage(lessonId)).toBe(62);
 });

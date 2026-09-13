@@ -18,13 +18,15 @@ import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
 import { VoiceActions } from "./VoiceActions";
 import { MicControl } from "./MicControl";
+import { RecapPage } from "./RecapPage";
 
-type View = "voice" | "writing" | "history" | "settings";
+type View = "voice" | "writing" | "history" | "settings" | "recap";
 const labels: Record<View, string> = {
   voice: "会話",
   writing: "作文",
   history: "履歴",
   settings: "接続設定",
+  recap: "レッスンノート",
 };
 const icons: Record<string, React.ReactNode> = {
   voice: (
@@ -75,7 +77,10 @@ function Icon({ name }: { name: string }) {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("voice"),
+  const [view, setViewState] = useState<View>("voice"),
+    [recapLesson, setRecapLesson] = useState<Lesson | null>(null),
+    [recapError, setRecapError] = useState(""),
+    [attachedVoiceId, setAttachedVoiceId] = useState(""),
     [status, setStatus] = useState<AppStatus | null>(null),
     [voice, setVoice] = useState<Lesson | null>(null),
     [writing, setWriting] = useState<Lesson | null>(null),
@@ -93,6 +98,8 @@ export default function App() {
     [follow, setFollow] = useState(true),
     [currentSeconds, setCurrentSeconds] = useState(0),
     [hintText, setHintText] = useState("");
+  const recapId = useRef("");
+  const sessionLessonId = useRef("");
   const assisted = useRef(new Set<string>());
   const helpRequests = useRef(new Map<string, Promise<unknown>>());
   const owner = useRef(crypto.randomUUID()),
@@ -106,6 +113,48 @@ export default function App() {
     attempts = useRef(new Map<string, string>());
   currentVoice.current = voice;
   currentWriting.current = writing;
+  function setView(next: View) {
+    if (next !== "recap") window.history.pushState(null, "", `#/${next}`);
+    setViewState(next);
+  }
+  async function openRecap(id: string, retry = false) {
+    if (sessionLessonId.current) {
+      setNotice("会話を終了してから、レッスンノートを開いてください。");
+      window.history.replaceState(null, "", "#/voice");
+      setViewState("voice");
+      return;
+    }
+    setRecapError("");
+    recapId.current = id;
+    setViewState("recap");
+    const route = `#/recap/${encodeURIComponent(id)}`;
+    if (location.hash !== route) window.history.pushState(null, "", route);
+    setRecapLesson((prior) =>
+      prior?.id === id ? prior : currentVoice.current?.id === id ? currentVoice.current : null,
+    );
+    try {
+      const lesson = await api<Lesson>(`/lessons/${id}/recap`, { retry });
+      if (recapId.current === id) setRecapLesson(lesson);
+      updateLesson(lesson);
+    } catch (error) {
+      if (recapId.current === id) setRecapError((error as Error).message);
+    }
+  }
+  useEffect(() => {
+    const route = () => {
+      const match = location.hash.match(/^#\/recap\/(.+)$/);
+      if (match) void openRecap(decodeURIComponent(match[1]));
+      else if (["#/voice", "#/writing", "#/history", "#/settings"].includes(location.hash))
+        setViewState(location.hash.slice(2) as View);
+    };
+    route();
+    window.addEventListener("hashchange", route);
+    window.addEventListener("popstate", route);
+    return () => {
+      window.removeEventListener("hashchange", route);
+      window.removeEventListener("popstate", route);
+    };
+  }, []);
   const refresh = useCallback(async () => {
     try {
       setStatus(await api<AppStatus>("/status"));
@@ -114,6 +163,7 @@ export default function App() {
     }
   }, []);
   function updateLesson(l: Lesson) {
+    if (l.id === recapId.current) setRecapLesson(l);
     setHistory((items) => [l, ...items.filter((i) => i.id !== l.id)]);
     if (l.kind === "voice" && (!currentVoice.current || currentVoice.current.id === l.id))
       setVoice(l);
@@ -161,16 +211,21 @@ export default function App() {
       }
       if (event.event.type === "session.usage.updated") {
         const u = event.event.usage as { seconds: number };
-        if (u) setCurrentSeconds(u.seconds);
+        if (u) setCurrentSeconds(Number(event.event.totalSeconds ?? u.seconds));
       }
       if (event.event.type === "session.closed" || event.event.type === "local.closed") {
+        sessionLessonId.current = "";
+        if (!event.event.paused) setAttachedVoiceId("");
         voiceClient.current?.cleanup();
         setConnecting(false);
         setMuted(false);
         const u = event.event.usage as { seconds?: number };
-        if (u?.seconds != null) setCurrentSeconds(u.seconds);
+        if (u?.seconds != null) setCurrentSeconds(Number(event.event.totalSeconds ?? u.seconds));
         void refresh();
-        if (currentVoice.current?.practice) void reviewVoice(event.lessonId);
+        if (!event.event.paused) {
+          void openRecap(event.lessonId);
+          if (currentVoice.current?.practice) void reviewVoice(event.lessonId);
+        }
       }
       if (event.event.type === "error") {
         const err = event.event.error as { message?: string };
@@ -199,6 +254,7 @@ export default function App() {
       ws.onclose = () => {
         setConnectedEvents(false);
         if (!stopped) {
+          sessionLessonId.current = "";
           voiceClient.current?.cleanup();
           setConnecting(false);
           retry = setTimeout(connect, 2000);
@@ -210,6 +266,13 @@ export default function App() {
     void refresh();
     void api<Lesson[]>("/lessons").then((items) => {
       setHistory(items);
+      const paused = items.find(
+        (l) => l.id === localStorage.getItem("bahasa.voice") && l.status === "paused",
+      );
+      if (paused) {
+        setVoice(paused);
+        setAttachedVoiceId(paused.id);
+      }
       const id = localStorage.getItem("bahasa.writing");
       const l = items.find((i) => i.id === id);
       if (l) {
@@ -261,11 +324,18 @@ export default function App() {
   }, [voice?.rows, follow, view]);
   const active = status?.voice.active,
     owns = active?.owner === owner.current,
-    running = Boolean(active) || connecting;
+    running = Boolean(active) || connecting,
+    paused = !running && voice?.status === "paused";
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(
-      () => setCurrentSeconds(Math.max(active.seconds, (Date.now() - active.startedAt) / 1000)),
+      () =>
+        setCurrentSeconds(
+          Math.max(
+            active.seconds,
+            (active.baseSeconds || 0) + (Date.now() - active.startedAt) / 1000,
+          ),
+        ),
       1000,
     );
     return () => clearInterval(timer);
@@ -301,12 +371,12 @@ export default function App() {
     if (!audio.current) return;
     setNotice("");
     setConnecting(true);
-    setCurrentSeconds(0);
-    setHintText("");
+    setCurrentSeconds(selected?.status === "paused" ? selected.voiceSeconds || 0 : 0);
+    if (selected?.status !== "paused") setHintText("");
     const client = new VoiceClient(owner.current, audio.current);
     voiceClient.current = client;
     try {
-      let lesson = selected?.status === "draft" ? selected : null;
+      let lesson = selected && ["draft", "paused"].includes(selected.status) ? selected : null;
       if (!lesson)
         lesson = await api<Lesson>("/lessons", {
           kind: "voice",
@@ -316,6 +386,9 @@ export default function App() {
       if (lesson.practice && !lesson.exercise)
         lesson = await api<Lesson>(`/lessons/${lesson.id}/exercise`, {});
       currentVoice.current = lesson;
+      sessionLessonId.current = lesson.id;
+      setAttachedVoiceId(lesson.id);
+      localStorage.setItem("bahasa.voice", lesson.id);
       setVoice(lesson);
       setFollow(true);
       await client.start(
@@ -328,6 +401,7 @@ export default function App() {
       );
       await refresh();
     } catch (e) {
+      sessionLessonId.current = "";
       setNotice((e as Error).message);
       setConnecting(false);
       await refresh();
@@ -378,11 +452,42 @@ export default function App() {
   }
   async function stop() {
     await perform("stop", async () => {
-      await voiceClient.current?.stop();
+      const lesson = currentVoice.current;
+      if (lesson?.status === "paused")
+        updateLesson(await api<Lesson>(`/lessons/${lesson.id}/finish`, {}));
+      else await voiceClient.current?.stop();
+      sessionLessonId.current = "";
+      setAttachedVoiceId("");
+      if (lesson) void openRecap(lesson.id);
       setConnecting(false);
       setMuted(false);
       await refresh();
       if (voice?.practice) await reviewVoice(voice.id);
+    });
+  }
+  async function pause() {
+    await perform("pause", async () => {
+      const lesson = (await voiceClient.current?.pause()) as Lesson | undefined;
+      if (lesson) {
+        sessionLessonId.current = "";
+        updateLesson(lesson);
+        setCurrentSeconds(lesson.voiceSeconds || 0);
+      }
+      setMuted(false);
+      await refresh();
+    });
+  }
+  async function practiceRecap(section: number, point: number) {
+    if (!recapLesson) return;
+    await perform("exercise", async () => {
+      const lesson = await api<Lesson>(`/lessons/${recapLesson.id}/recap/practice`, {
+        section,
+        point,
+      });
+      currentWriting.current = lesson;
+      setWriting(lesson);
+      setView("writing");
+      updateLesson(await api<Lesson>(`/lessons/${lesson.id}/exercise`, {}));
     });
   }
   async function evaluate(force = false) {
@@ -397,6 +502,10 @@ export default function App() {
     });
   }
   function openLesson(l: Lesson) {
+    if (l.kind === "voice" && ["completed", "interrupted"].includes(l.status) && !running) {
+      void openRecap(l.id);
+      return;
+    }
     if (l.kind === "voice") {
       if (running && active?.lessonId !== l.id) {
         setNotice("現在の会話を終了してから、別の会話を開いてください。");
@@ -465,7 +574,7 @@ export default function App() {
           <Icon name="settings" />
         </button>
       </header>
-      <main className={view === "voice" ? "voice-main" : ""}>
+      <main className={view === "voice" ? "voice-main" : view === "recap" ? "recap-main" : ""}>
         {notice && (
           <div role="alert" className="notice">
             <span>{notice}</span>
@@ -552,13 +661,10 @@ export default function App() {
                   )}
                 </div>
               )}
-              {voice && !running && voice.rows.some((r) => r.role === "user") && (
-                <LearningLoop
-                  lesson={voice}
-                  busy={busy === "review" || busy === "exercise"}
-                  onPractice={(f, m) => void beginPractice(f, m, "voice")}
-                  onReview={() => void reviewVoice(voice.id, true)}
-                />
+              {voice && !running && !paused && voice.rows.length > 0 && (
+                <button className="text-button" onClick={() => void openRecap(voice.id)}>
+                  レッスンノートを読む
+                </button>
               )}
             </div>
             {!follow && blocks.length > 0 && (
@@ -566,7 +672,7 @@ export default function App() {
                 最新の字幕へ
               </button>
             )}
-            {running && owns && voice && (
+            {voice && attachedVoiceId === voice.id && (
               <ReplyHints key={voice.id} lesson={voice} onInspect={() => inspect(voice)} />
             )}
             <div className={`voice-controls${running ? " is-running" : ""}`}>
@@ -579,16 +685,54 @@ export default function App() {
                   >
                     {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
                   </button>
-                  <MicControl
-                    muted={muted}
-                    connecting={connecting}
-                    disabled={!owns || active?.status !== "active" || busy === "stop"}
-                    onChange={(next) => {
-                      voiceClient.current?.mute(next);
-                      setMuted(next);
-                    }}
-                  />
+                  <div className="mic-with-pause">
+                    <MicControl
+                      muted={muted}
+                      connecting={connecting}
+                      disabled={!owns || active?.status !== "active" || busy === "stop"}
+                      onChange={(next) => {
+                        voiceClient.current?.mute(next);
+                        setMuted(next);
+                      }}
+                    />
+                    <button
+                      className="think-button"
+                      disabled={!owns || active?.status !== "active" || Boolean(busy)}
+                      onClick={() => void pause()}
+                    >
+                      {busy === "pause" ? "接続を終了中…" : "考える時間"}
+                    </button>
+                    {muted && (
+                      <small className="mute-cost-note">
+                        ミュート中も課金は続きます。「考える時間」で休止できます
+                      </small>
+                    )}
+                  </div>
                 </>
+              ) : paused ? (
+                <div className="thinking-break">
+                  <h2>ゆっくり、考えて大丈夫です。</h2>
+                  <p>音声接続を休止しました。この間の音声料金はかかりません。</p>
+                  <div>
+                    <button
+                      className="primary"
+                      disabled={!connectedEvents || Boolean(busy)}
+                      onClick={() => void start(voice)}
+                    >
+                      続きから話す
+                    </button>
+                    <button
+                      className="text-button"
+                      disabled={Boolean(busy)}
+                      onClick={() => void stop()}
+                    >
+                      ここで終えて、まとめを見る
+                    </button>
+                  </div>
+                  <small>
+                    再接続時に15秒分（約$0.0125）の初期化課金があります。接続後の利用時間に充当されます。
+                  </small>
+                </div>
               ) : (
                 <button
                   className="primary talk-button"
@@ -599,39 +743,41 @@ export default function App() {
                   {voice?.rows.length ? "新しく話す" : "話す"}
                 </button>
               )}
-              <details className="more-controls">
-                <summary>その他</summary>
-                <div>
-                  <VoiceActions
-                    owner={owner.current}
-                    disabled={!owns || active?.status !== "active"}
-                    onError={setNotice}
-                  />
-                  <button
-                    onClick={(event) => {
-                      const menu = event.currentTarget.closest("details");
-                      if (menu) {
-                        menu.open = false;
-                        menu.querySelector("summary")?.focus();
-                      }
-                      void audio.current
-                        ?.play()
-                        .catch(() => setNotice("会話を開始してから再生してください。"));
-                    }}
-                  >
-                    音声の再生を再開
-                  </button>
-                  <p>
-                    今回 ${voiceCost(currentSeconds).toFixed(2)} · 今月 $
-                    {voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}
-                    <br />
-                    <small>概算 USD{status?.voice.unconfirmed ? "・未確定分を含む" : ""}</small>
-                  </p>
-                </div>
-              </details>
+              {!paused && (
+                <details className="more-controls">
+                  <summary>その他</summary>
+                  <div>
+                    <VoiceActions
+                      owner={owner.current}
+                      disabled={!owns || active?.status !== "active"}
+                      onError={setNotice}
+                    />
+                    <button
+                      onClick={(event) => {
+                        const menu = event.currentTarget.closest("details");
+                        if (menu) {
+                          menu.open = false;
+                          menu.querySelector("summary")?.focus();
+                        }
+                        void audio.current
+                          ?.play()
+                          .catch(() => setNotice("会話を開始してから再生してください。"));
+                      }}
+                    >
+                      音声の再生を再開
+                    </button>
+                    <p>
+                      今回 ${voiceCost(currentSeconds).toFixed(2)} · 今月 $
+                      {voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}
+                      <br />
+                      <small>概算 USD{status?.voice.unconfirmed ? "・未確定分を含む" : ""}</small>
+                    </p>
+                  </div>
+                </details>
+              )}
             </div>
             <audio ref={audio} hidden aria-label="コーチの音声" />
-            {!running && (
+            {!running && !paused && (
               <details className="optional-practice">
                 <summary>テーマを決めて練習する</summary>
                 <div className="exercise-toolbar">
@@ -657,6 +803,25 @@ export default function App() {
               </details>
             )}
           </div>
+        )}
+        {view === "recap" && (
+          <RecapPage
+            lesson={recapLesson}
+            busy={Boolean(busy)}
+            requestError={recapError}
+            onRetry={() => void openRecap(recapId.current, true)}
+            onTranscript={() => {
+              if (recapLesson) {
+                if (sessionLessonId.current && sessionLessonId.current !== recapLesson.id) {
+                  setNotice("現在の会話を終了してから、以前の字幕を開いてください。");
+                  return;
+                }
+                setVoice(recapLesson);
+                setView("voice");
+              }
+            }}
+            onPractice={(section, point) => void practiceRecap(section, point)}
+          />
         )}
         {view === "writing" && (
           <section className="writing">
