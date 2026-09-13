@@ -146,3 +146,13 @@ describe("learning API", () => {
     expect(readFileSync(join(dir, "voice-key"), "utf8")).toBe(key);
   });
 });
+
+it("does not expose the removed coach-action endpoint", async () => {
+  const response = await context.app.inject({
+    method: "POST",
+    url: "/api/live/action",
+    headers,
+    payload: { owner: randomUUID(), action: "repeat" },
+  });
+  expect(response.statusCode).toBe(404);
+});

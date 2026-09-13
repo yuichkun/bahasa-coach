@@ -4,10 +4,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import App from "./App";
 import { GlossProvider } from "./Gloss";
-import type { Lesson } from "../shared/types";
+import type { Lesson, LiveInfo } from "../shared/types";
 const mocks = vi.hoisted(() => ({
   start: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn(),
+  pause: vi.fn(),
+  active: null as LiveInfo | null,
   owner: "",
   sockets: [] as any[],
 }));
@@ -19,7 +21,7 @@ vi.mock("./voice", () => ({
     start = mocks.start;
     cleanup = mocks.cleanup;
     stop = vi.fn().mockResolvedValue(undefined);
-    mute = vi.fn();
+    pause = mocks.pause;
   },
 }));
 const free: Lesson = {
@@ -41,6 +43,8 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/");
   mocks.start.mockReset().mockResolvedValue(undefined);
   mocks.sockets = [];
+  mocks.active = null;
+  mocks.pause.mockReset();
   vi.stubGlobal(
     "WebSocket",
     class {
@@ -69,7 +73,7 @@ beforeEach(() => {
           chatgpt: { connected: true, email: null, plan: "pro", pending: false, error: null },
           voice: {
             configured: true,
-            active: null,
+            active: mocks.active,
             monthSeconds: 0,
             unconfirmed: 0,
             pricePerMinute: 0.05,
@@ -239,7 +243,7 @@ it("keeps reply hints mounted while reconnecting the same paused lesson", async 
   );
   await waitFor(() => expect(screen.getByText("炒飯を選ぶ")).toBeTruthy(), { timeout: 2500 });
   const shown = screen.getByText("炒飯を選ぶ");
-  fireEvent.click(screen.getByRole("button", { name: "続きから話す" }));
+  fireEvent.click(screen.getByRole("button", { name: "マイク" }));
   await waitFor(() => expect(mocks.start).toHaveBeenCalled());
   expect(screen.getByText("炒飯を選ぶ")).toBe(shown);
   await act(async () => {
@@ -268,4 +272,57 @@ it("prevents an older recap route from replacing the current active lesson", asy
       .mocked(fetch)
       .mock.calls.some(([url]) => typeof url === "string" && url.includes("older-lesson")),
   ).toBe(false);
+});
+
+it("uses one stable microphone button to close the connection and reconnect with M", async () => {
+  const pausedLesson: Lesson = { ...free, status: "paused", voiceSeconds: 30 };
+  mocks.start.mockImplementation(async () => {
+    mocks.active = {
+      lessonId: free.id,
+      owner: mocks.owner,
+      sessionId: "live",
+      status: "active",
+      seconds: 30,
+      startedAt: Date.now(),
+    };
+    const ws = mocks.sockets[0];
+    ws.onmessage({
+      data: JSON.stringify({ type: "lesson", lesson: { ...free, status: "active" } }),
+    });
+    ws.onmessage({
+      data: JSON.stringify({ type: "live", lessonId: free.id, event: { type: "session.started" } }),
+    });
+  });
+  mocks.pause.mockRejectedValueOnce(new Error("接続を停止できませんでした。"));
+  mocks.pause.mockImplementationOnce(async () => {
+    mocks.active = null;
+    return pausedLesson;
+  });
+  render(
+    <GlossProvider prefetch={false}>
+      <App />
+    </GlossProvider>,
+  );
+  const start = screen.getByRole("button", { name: "話す" });
+  await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(start);
+  await waitFor(() => expect(screen.getByText("マイク オン")).toBeTruthy());
+  const mic = screen.getByRole("button", { name: "マイク" });
+  await waitFor(() => expect((mic as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(mic);
+  await waitFor(() => expect(screen.getByText("接続を停止できませんでした。")).toBeTruthy());
+  expect(mic.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(mic);
+  await waitFor(() => expect(screen.getByText("マイク オフ")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "マイク" })).toBe(mic);
+  expect(mic.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByText("考える時間")).toBeNull();
+  expect(screen.queryByText("その他")).toBeNull();
+  expect(screen.queryByText("続きから話す")).toBeNull();
+  fireEvent.keyDown(window, { key: "m" });
+  await waitFor(() => expect(screen.getByText("マイク オン")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "マイク" })).toBe(mic);
+  expect(mocks.start).toHaveBeenCalledTimes(2);
+  expect(mocks.start.mock.calls[1][0]).toBe(free.id);
+  expect(mocks.pause).toHaveBeenCalledTimes(2);
 });

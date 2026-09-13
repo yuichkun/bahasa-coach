@@ -278,50 +278,6 @@
 .recap-skeleton span:nth-child(3) {
   width: 63%;
 }
-.mic-with-pause {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-.think-button {
-  font-size: 12px;
-  padding: 7px 12px;
-  border-color: #d4dacb;
-  color: #526247;
-}
-.mute-cost-note {
-  font-size: 10px;
-  color: #737263;
-  max-width: 170px;
-  text-align: center;
-}
-.thinking-break {
-  width: 100%;
-  padding: 10px 0;
-}
-.thinking-break h2 {
-  font-size: 19px;
-  margin: 0 0 10px;
-}
-.thinking-break p {
-  font-size: 13px;
-  line-height: 1.8;
-  color: #536347;
-  margin: 0 0 14px;
-}
-.thinking-break > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.thinking-break small {
-  display: block;
-  font-size: 11px;
-  line-height: 1.7;
-  color: #727667;
-  margin-top: 12px;
-}
 @media (max-width: 760px) {
   .recap-main {
     padding: 0 22px 40px;

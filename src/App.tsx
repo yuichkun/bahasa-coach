@@ -16,7 +16,6 @@ import { transcriptBlocks } from "../shared/transcript";
 import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
-import { VoiceActions } from "./VoiceActions";
 import { MicControl } from "./MicControl";
 import { RecapPage } from "./RecapPage";
 
@@ -91,7 +90,6 @@ export default function App() {
     [notice, setNotice] = useState(""),
     [saved, setSaved] = useState(""),
     [key, setKey] = useState(""),
-    [muted, setMuted] = useState(false),
     [connecting, setConnecting] = useState(false),
     [connectedEvents, setConnectedEvents] = useState(false),
     [search, setSearch] = useState(""),
@@ -218,7 +216,6 @@ export default function App() {
         if (!event.event.paused) setAttachedVoiceId("");
         voiceClient.current?.cleanup();
         setConnecting(false);
-        setMuted(false);
         const u = event.event.usage as { seconds?: number };
         if (u?.seconds != null) setCurrentSeconds(Number(event.event.totalSeconds ?? u.seconds));
         void refresh();
@@ -270,6 +267,7 @@ export default function App() {
         (l) => l.id === localStorage.getItem("bahasa.voice") && l.status === "paused",
       );
       if (paused) {
+        setCurrentSeconds(paused.voiceSeconds || 0);
         setVoice(paused);
         setAttachedVoiceId(paused.id);
       }
@@ -326,6 +324,9 @@ export default function App() {
     owns = active?.owner === owner.current,
     running = Boolean(active) || connecting,
     paused = !running && voice?.status === "paused";
+  // Session.started and the status response arrive independently. Keep the same
+  // microphone mounted between them so reconnecting does not move keyboard focus.
+  const showMic = running || paused || (voice?.status === "active" && attachedVoiceId === voice.id);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(
@@ -460,7 +461,6 @@ export default function App() {
       setAttachedVoiceId("");
       if (lesson) void openRecap(lesson.id);
       setConnecting(false);
-      setMuted(false);
       await refresh();
       if (voice?.practice) await reviewVoice(voice.id);
     });
@@ -473,7 +473,6 @@ export default function App() {
         updateLesson(lesson);
         setCurrentSeconds(lesson.voiceSeconds || 0);
       }
-      setMuted(false);
       await refresh();
     });
   }
@@ -675,64 +674,32 @@ export default function App() {
             {voice && attachedVoiceId === voice.id && (
               <ReplyHints key={voice.id} lesson={voice} onInspect={() => inspect(voice)} />
             )}
-            <div className={`voice-controls${running ? " is-running" : ""}`}>
-              {running ? (
+            <div className={`voice-controls${showMic ? " is-running" : ""}`}>
+              {showMic ? (
                 <>
                   <button
                     className="end-call"
-                    disabled={(!owns && !connecting) || busy === "stop"}
+                    disabled={connecting || Boolean(busy) || (!paused && !owns)}
                     onClick={() => void stop()}
                   >
                     {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
                   </button>
-                  <div className="mic-with-pause">
-                    <MicControl
-                      muted={muted}
-                      connecting={connecting}
-                      disabled={!owns || active?.status !== "active" || busy === "stop"}
-                      onChange={(next) => {
-                        voiceClient.current?.mute(next);
-                        setMuted(next);
-                      }}
-                    />
-                    <button
-                      className="think-button"
-                      disabled={!owns || active?.status !== "active" || Boolean(busy)}
-                      onClick={() => void pause()}
-                    >
-                      {busy === "pause" ? "接続を終了中…" : "考える時間"}
-                    </button>
-                    {muted && (
-                      <small className="mute-cost-note">
-                        ミュート中も課金は続きます。「考える時間」で休止できます
-                      </small>
-                    )}
-                  </div>
+                  <MicControl
+                    muted={Boolean(paused)}
+                    connecting={connecting}
+                    stopping={busy === "pause"}
+                    disabled={
+                      connecting ||
+                      Boolean(busy) ||
+                      !connectedEvents ||
+                      (!paused && (!owns || active?.status !== "active"))
+                    }
+                    onChange={() => (paused ? start(voice) : pause())}
+                  />
+                  <span className="call-cost" title="音声の概算料金（USD）">
+                    今回 ${voiceCost(currentSeconds).toFixed(2)}
+                  </span>
                 </>
-              ) : paused ? (
-                <div className="thinking-break">
-                  <h2>ゆっくり、考えて大丈夫です。</h2>
-                  <p>音声接続を休止しました。この間の音声料金はかかりません。</p>
-                  <div>
-                    <button
-                      className="primary"
-                      disabled={!connectedEvents || Boolean(busy)}
-                      onClick={() => void start(voice)}
-                    >
-                      続きから話す
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={Boolean(busy)}
-                      onClick={() => void stop()}
-                    >
-                      ここで終えて、まとめを見る
-                    </button>
-                  </div>
-                  <small>
-                    再接続時に15秒分（約$0.0125）の初期化課金があります。接続後の利用時間に充当されます。
-                  </small>
-                </div>
               ) : (
                 <button
                   className="primary talk-button"
@@ -743,41 +710,9 @@ export default function App() {
                   {voice?.rows.length ? "新しく話す" : "話す"}
                 </button>
               )}
-              {!paused && (
-                <details className="more-controls">
-                  <summary>その他</summary>
-                  <div>
-                    <VoiceActions
-                      owner={owner.current}
-                      disabled={!owns || active?.status !== "active"}
-                      onError={setNotice}
-                    />
-                    <button
-                      onClick={(event) => {
-                        const menu = event.currentTarget.closest("details");
-                        if (menu) {
-                          menu.open = false;
-                          menu.querySelector("summary")?.focus();
-                        }
-                        void audio.current
-                          ?.play()
-                          .catch(() => setNotice("会話を開始してから再生してください。"));
-                      }}
-                    >
-                      音声の再生を再開
-                    </button>
-                    <p>
-                      今回 ${voiceCost(currentSeconds).toFixed(2)} · 今月 $
-                      {voiceCost(status?.voice.monthSeconds || 0).toFixed(2)}
-                      <br />
-                      <small>概算 USD{status?.voice.unconfirmed ? "・未確定分を含む" : ""}</small>
-                    </p>
-                  </div>
-                </details>
-              )}
             </div>
             <audio ref={audio} hidden aria-label="コーチの音声" />
-            {!running && !paused && (
+            {!showMic && (
               <details className="optional-practice">
                 <summary>テーマを決めて練習する</summary>
                 <div className="exercise-toolbar">
@@ -1044,6 +979,8 @@ export default function App() {
               <h2>音声 API</h2>
               <p className="muted">
                 GPT-Live-1 · $0.05／分{status?.voice.configured ? " · キー登録済み" : ""}
+                <br />
+                マイクをオンにする再接続には15秒分の初期化料金があり、その接続の利用時間に充当されます。
               </p>
               <form
                 onSubmit={(e) => {

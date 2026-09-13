@@ -1,23 +1,39 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function MicControl({
   muted,
   disabled,
   connecting,
+  stopping = false,
   onChange,
 }: {
   muted: boolean;
   disabled: boolean;
   connecting: boolean;
-  onChange: (muted: boolean) => void;
+  stopping?: boolean;
+  onChange: (muted: boolean) => void | Promise<void>;
 }) {
   const latest = useRef({ muted, disabled, onChange });
   latest.current = { muted, disabled, onChange };
+  const pending = useRef(false);
+  const [waiting, setWaiting] = useState(false);
   const toggle = useCallback(() => {
     const state = latest.current;
-    if (state.disabled) return;
-    state.muted = !state.muted;
-    state.onChange(state.muted);
+    if (state.disabled || pending.current) return;
+    pending.current = true;
+    setWaiting(true);
+    const settled = () => {
+      pending.current = false;
+      setWaiting(false);
+    };
+    try {
+      const result = state.onChange(!state.muted);
+      if (result) void result.then(settled, settled);
+      else settled();
+    } catch (error) {
+      settled();
+      throw error;
+    }
   }, []);
   useEffect(() => {
     if (disabled) return;
@@ -53,10 +69,11 @@ export function MicControl({
       <button
         className="mic-toggle"
         type="button"
-        disabled={disabled}
+        disabled={disabled || waiting}
         aria-label="マイク"
         aria-pressed={!muted}
         aria-keyshortcuts="M"
+        aria-busy={connecting || stopping || waiting}
         title={`${muted ? "マイクをオンにする" : "マイクをオフにする"} (M)`}
         data-muted={muted}
         onClick={toggle}
@@ -84,7 +101,7 @@ export function MicControl({
         </svg>
       </button>
       <span className="mic-state" aria-live="polite">
-        {connecting ? "接続中…" : muted ? "マイク オフ" : "マイク オン"}
+        {stopping ? "停止中…" : connecting ? "接続中…" : muted ? "マイク オフ" : "マイク オン"}
       </span>
       <span className="mic-shortcut">
         <kbd>M</kbd> で切り替え

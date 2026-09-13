@@ -33,7 +33,7 @@ export class VoiceClient {
           .play()
           .catch(() =>
             onFailure(
-              "音声の再生が止められました。「その他」の「音声の再生を再開」を押してください。",
+              "音声を再生できませんでした。マイクをオフにして、もう一度オンにしてください。",
             ),
           );
       });
@@ -83,9 +83,6 @@ export class VoiceClient {
       this.cleanup();
       throw e;
     }
-  }
-  mute(muted: boolean) {
-    for (const track of this.mic?.getAudioTracks() || []) track.enabled = !muted;
   }
   async stop() {
     this.cancelled = true;

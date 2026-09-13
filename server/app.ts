@@ -321,13 +321,6 @@ export async function createApp(options: {
       throw new Error("字幕の接続が準備できていません。再読み込みしてください。");
     return live.start(owner, lessonId, sdp);
   });
-  app.post("/api/live/action", async (req) => {
-    const { owner, action } = z
-      .object({ owner: z.string().uuid(), action: z.enum(["repeat", "slow", "japanese"]) })
-      .parse(req.body);
-    await live.action(owner, action);
-    return { ok: true };
-  });
   app.post("/api/live/stop", async (req) => {
     const { owner } = z.object({ owner: z.string().uuid() }).parse(req.body);
     if (live.info() && live.info()?.owner !== owner)
