@@ -25,16 +25,16 @@ function Fixture({
     />
   );
 }
-it("toggles the microphone by click or M and shows an unambiguous on/off state", () => {
+it("labels the next action explicitly while keeping one microphone button for click and M", () => {
   const changed = vi.fn();
   render(<Fixture changed={changed} />);
-  const button = screen.getByRole("button", { name: "マイク" });
-  expect(button.getAttribute("aria-pressed")).toBe("true");
+  const button = screen.getByRole("button", { name: "マイクを止める" });
+  expect(button.getAttribute("aria-label")).toBe("マイクを止める");
   fireEvent.click(button);
-  expect(screen.getByText("マイク オフ")).toBeTruthy();
-  expect(button.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByText("マイクを再開")).toBeTruthy();
+  expect(button.getAttribute("aria-label")).toBe("マイクを再開");
   fireEvent.keyDown(window, { key: "m" });
-  expect(screen.getByText("マイク オン")).toBeTruthy();
+  expect(screen.getByText("マイクを止める")).toBeTruthy();
   expect(changed.mock.calls).toEqual([[true], [false]]);
 });
 it.each(["input", "textarea", "select", "editable", "dialog"])(
@@ -95,7 +95,7 @@ it("disables shortcuts when disconnected and removes them when leaving the voice
   const changed = vi.fn();
   const view = render(<Fixture changed={changed} disabled />);
   fireEvent.keyDown(window, { key: "m" });
-  fireEvent.click(screen.getByRole("button", { name: "マイク" }));
+  fireEvent.click(screen.getByRole("button", { name: "マイクを止める" }));
   expect(changed).not.toHaveBeenCalled();
   view.rerender(<Fixture changed={changed} />);
   fireEvent.keyDown(window, { key: "m" });

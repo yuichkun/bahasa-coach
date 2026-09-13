@@ -559,8 +559,52 @@ export default function App() {
   const connected = status?.chatgpt.connected;
   const blocks = transcriptBlocks(voice?.rows || []);
   const pendingFocus = history.map((l) => l.review?.focus).find((f) => f?.state === "transfer_due");
+  const listening =
+    owns &&
+    active?.status === "active" &&
+    sessionLessonId.current === active.lessonId &&
+    connectedEvents &&
+    !connecting &&
+    !stopUnconfirmed &&
+    busy !== "pause" &&
+    busy !== "stop";
+  const voiceState = !showMic
+    ? "idle"
+    : active && !owns
+      ? "external"
+      : stopUnconfirmed
+        ? "unconfirmed"
+        : busy === "pause" || busy === "stop" || active?.status === "closing"
+          ? "stopping"
+          : connecting || active?.status === "connecting"
+            ? "connecting"
+            : paused
+              ? "paused"
+              : listening
+                ? "listening"
+                : "checking";
+  const voiceStatus = {
+    idle: "",
+    listening: `${COACH_NAME} に声が届いています`,
+    paused: "マイクは停止中です",
+    connecting: "マイクを接続しています…",
+    stopping: busy === "stop" ? "会話を終了しています…" : "マイクを止めています…",
+    unconfirmed: "音声は停止済み・接続終了は未確認",
+    external: "別のタブで会話中です",
+    checking: "マイクの接続を確認しています…",
+  }[voiceState];
+  const startButton = (
+    <button
+      className="primary talk-button"
+      disabled={!status?.voice.configured || !connectedEvents || Boolean(busy)}
+      onClick={() => void start()}
+    >
+      <Icon name="voice" />
+      <span>{voice?.rows.length ? "新しい会話を始める" : "会話を始める"}</span>
+    </button>
+  );
   return (
-    <div className="app">
+    <div className="app" data-voice-state={view === "voice" ? voiceState : "idle"}>
       <header className="app-header">
         <a
           className="brand"
@@ -609,6 +653,17 @@ export default function App() {
         )}
         {view === "voice" && (
           <div className="voice-pane">
+            {showMic && (
+              <div
+                className="voice-presence"
+                id="voice-listening-status"
+                role="status"
+                aria-atomic="true"
+              >
+                <span className="voice-presence-dot" aria-hidden="true" />
+                <span>{voiceStatus}</span>
+              </div>
+            )}
             {voice?.exercise && (
               <details className="scene" open={Boolean(voice.practice)}>
                 <summary>
@@ -686,6 +741,7 @@ export default function App() {
                 <div className="voice-empty">
                   <h1>{COACH_NAME} と話しましょう。</h1>
                   <p>{COACH_DESCRIPTION}</p>
+                  {!showMic && startButton}
                   {!status?.voice.configured && (
                     <button className="text-button" onClick={() => setView("settings")}>
                       音声 API キーを設定する
@@ -707,44 +763,44 @@ export default function App() {
             {voice && attachedVoiceId === voice.id && (
               <ReplyHints key={voice.id} lesson={voice} onInspect={() => inspect(voice)} />
             )}
-            <div className={`voice-controls${showMic ? " is-running" : ""}`}>
-              {showMic ? (
-                <>
-                  <button
-                    className="end-call"
-                    disabled={connecting || Boolean(busy) || (!paused && !owns)}
-                    onClick={() => void stop()}
-                  >
-                    {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
-                  </button>
-                  <MicControl
-                    muted={Boolean(paused) || stopUnconfirmed}
-                    stopUnconfirmed={stopUnconfirmed}
-                    connecting={connecting}
-                    stopping={busy === "pause"}
-                    disabled={
-                      connecting ||
-                      Boolean(busy) ||
-                      !connectedEvents ||
-                      (!paused && (!owns || active?.status !== "active"))
-                    }
-                    onChange={() => (paused ? start(voice) : pause())}
-                  />
-                  <span className="call-cost" title="音声の概算料金（USD）">
-                    今回 ${voiceCost(currentSeconds).toFixed(2)}
-                  </span>
-                </>
-              ) : (
-                <button
-                  className="primary talk-button"
-                  disabled={!status?.voice.configured || !connectedEvents || Boolean(busy)}
-                  onClick={() => void start()}
-                >
-                  <Icon name="voice" />
-                  {voice?.rows.length ? "新しく話す" : "話す"}
-                </button>
-              )}
-            </div>
+            {(showMic || blocks.length > 0) && (
+              <div className={`voice-controls${showMic ? " is-running" : ""}`}>
+                {showMic ? (
+                  <>
+                    <button
+                      className="end-call"
+                      disabled={connecting || Boolean(busy) || (!paused && !owns)}
+                      onClick={() => void stop()}
+                    >
+                      {busy === "stop"
+                        ? "終了中…"
+                        : voice?.practice
+                          ? "回答を確認して終了"
+                          : "終了"}
+                    </button>
+                    <MicControl
+                      descriptionId="voice-listening-status"
+                      muted={Boolean(paused) || stopUnconfirmed}
+                      stopUnconfirmed={stopUnconfirmed}
+                      connecting={connecting}
+                      stopping={busy === "pause" || busy === "stop" || active?.status === "closing"}
+                      disabled={
+                        connecting ||
+                        Boolean(busy) ||
+                        !connectedEvents ||
+                        (!paused && (!owns || active?.status !== "active"))
+                      }
+                      onChange={() => (paused ? start(voice) : pause())}
+                    />
+                    <span className="call-cost" title="音声の概算料金（USD）">
+                      今回 ${voiceCost(currentSeconds).toFixed(2)}
+                    </span>
+                  </>
+                ) : (
+                  startButton
+                )}
+              </div>
+            )}
             <audio ref={audio} hidden aria-label="コーチの音声" />
             {!showMic && (
               <details className="optional-practice">

@@ -111,9 +111,12 @@ it("starts a free conversation with one click, without generating an exercise", 
       <App />
     </GlossProvider>,
   );
-  const start = screen.getByRole("button", { name: "話す" });
+  const start = screen.getByRole("button", { name: "会話を始める" });
   await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
   expect(container.querySelector(".sidebar")).toBeNull();
+  expect(start.closest(".voice-empty")).not.toBeNull();
+  expect(screen.getAllByRole("button", { name: "会話を始める" })).toHaveLength(1);
+  expect(container.querySelector(".app")?.getAttribute("data-voice-state")).toBe("idle");
   expect((container.querySelector(".optional-practice") as HTMLDetailsElement).open).toBe(false);
   fireEvent.click(start);
   await waitFor(() => expect(mocks.start).toHaveBeenCalled());
@@ -142,7 +145,7 @@ it("automatically opens the dedicated recap page when free conversation ends", a
       <App />
     </GlossProvider>,
   );
-  const start = screen.getByRole("button", { name: "話す" });
+  const start = screen.getByRole("button", { name: "会話を始める" });
   await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(start);
   await waitFor(() => expect(mocks.start).toHaveBeenCalled());
@@ -243,7 +246,7 @@ it("keeps reply hints mounted while reconnecting the same paused lesson", async 
   );
   await waitFor(() => expect(screen.getByText("炒飯を選ぶ")).toBeTruthy(), { timeout: 2500 });
   const shown = screen.getByText("炒飯を選ぶ");
-  fireEvent.click(screen.getByRole("button", { name: "マイク" }));
+  fireEvent.click(screen.getByRole("button", { name: "マイクを再開" }));
   await waitFor(() => expect(mocks.start).toHaveBeenCalled());
   expect(screen.getByText("炒飯を選ぶ")).toBe(shown);
   await act(async () => {
@@ -257,7 +260,7 @@ it("prevents an older recap route from replacing the current active lesson", asy
       <App />
     </GlossProvider>,
   );
-  const start = screen.getByRole("button", { name: "話す" });
+  const start = screen.getByRole("button", { name: "会話を始める" });
   await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(start);
   await waitFor(() => expect(mocks.start).toHaveBeenCalled());
@@ -303,27 +306,102 @@ it("uses one stable microphone button to close the connection and reconnect with
       <App />
     </GlossProvider>,
   );
-  const start = screen.getByRole("button", { name: "話す" });
+  const start = screen.getByRole("button", { name: "会話を始める" });
   await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(start);
-  await waitFor(() => expect(screen.getByText("マイク オン")).toBeTruthy());
-  const mic = screen.getByRole("button", { name: "マイク" });
+  await waitFor(() => expect(screen.getByText("Rani に声が届いています")).toBeTruthy());
+  const mic = screen.getByRole("button", { name: "マイクを止める" });
+  const app = mic.closest(".app")!;
+  expect(app.getAttribute("data-voice-state")).toBe("listening");
+  expect(document.getElementById(mic.getAttribute("aria-describedby")!)?.textContent).toContain(
+    "声が届いています",
+  );
   await waitFor(() => expect((mic as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(mic);
   await waitFor(() => expect(screen.getByText(/接続を停止できませんでした。/)).toBeTruthy());
-  expect(mic.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByText("Rani に声が届いています")).toBeNull();
   expect(screen.getByText("停止を再試行")).toBeTruthy();
+  expect(app.getAttribute("data-voice-state")).toBe("unconfirmed");
   fireEvent.click(mic);
-  await waitFor(() => expect(screen.getByText("マイク オフ")).toBeTruthy());
-  expect(screen.getByRole("button", { name: "マイク" })).toBe(mic);
-  expect(mic.getAttribute("aria-pressed")).toBe("false");
+  await waitFor(() => expect(screen.getByText("マイクは停止中です")).toBeTruthy());
+  expect(app.getAttribute("data-voice-state")).toBe("paused");
+  expect(screen.getByRole("button", { name: "マイクを再開" })).toBe(mic);
+  expect(screen.queryByText("Rani に声が届いています")).toBeNull();
   expect(screen.queryByText("考える時間")).toBeNull();
   expect(screen.queryByText("その他")).toBeNull();
   expect(screen.queryByText("続きから話す")).toBeNull();
   fireEvent.keyDown(window, { key: "m" });
-  await waitFor(() => expect(screen.getByText("マイク オン")).toBeTruthy());
-  expect(screen.getByRole("button", { name: "マイク" })).toBe(mic);
+  await waitFor(() => expect(screen.getByText("Rani に声が届いています")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "マイクを止める" })).toBe(mic);
   expect(mocks.start).toHaveBeenCalledTimes(2);
   expect(mocks.start.mock.calls[1][0]).toBe(free.id);
   expect(mocks.pause).toHaveBeenCalledTimes(2);
+});
+
+it("removes the listening signal immediately while a microphone stop is still being confirmed", async () => {
+  let finishPause!: () => void;
+  mocks.start.mockImplementation(async () => {
+    mocks.active = {
+      lessonId: free.id,
+      owner: mocks.owner,
+      sessionId: "live",
+      status: "active",
+      seconds: 0,
+      startedAt: Date.now(),
+    };
+    mocks.sockets[0].onmessage({
+      data: JSON.stringify({ type: "live", lessonId: free.id, event: { type: "session.started" } }),
+    });
+  });
+  mocks.pause.mockImplementation(
+    () =>
+      new Promise<Lesson>((resolve) => {
+        finishPause = () => {
+          mocks.active = null;
+          resolve({ ...free, status: "paused" });
+        };
+      }),
+  );
+  const { container } = render(
+    <GlossProvider prefetch={false}>
+      <App />
+    </GlossProvider>,
+  );
+  const start = screen.getByRole("button", { name: "会話を始める" });
+  await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(start);
+  await waitFor(() => expect(screen.getByText("Rani に声が届いています")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "マイクを止める" }));
+  expect(container.querySelector(".app")?.getAttribute("data-voice-state")).toBe("stopping");
+  expect(screen.queryByText("Rani に声が届いています")).toBeNull();
+  expect(screen.queryByText("マイクは停止中です")).toBeNull();
+  expect((screen.getByRole("button", { name: "停止中…" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  fireEvent.keyDown(window, { key: "m" });
+  expect(mocks.pause).toHaveBeenCalledTimes(1);
+  await act(async () => finishPause());
+  await waitFor(() => expect(screen.getByText("マイクは停止中です")).toBeTruthy());
+  expect(container.querySelector(".app")?.getAttribute("data-voice-state")).toBe("paused");
+});
+it("does not say this microphone is listening when another tab owns the call", async () => {
+  mocks.active = {
+    lessonId: free.id,
+    owner: "another-tab",
+    sessionId: "live",
+    status: "active",
+    seconds: 0,
+    startedAt: Date.now(),
+  };
+  const { container } = render(
+    <GlossProvider prefetch={false}>
+      <App />
+    </GlossProvider>,
+  );
+  await waitFor(() => expect(screen.getByText("別のタブで会話中です")).toBeTruthy());
+  expect(container.querySelector(".app")?.getAttribute("data-voice-state")).toBe("external");
+  expect(screen.queryByText("Rani に声が届いています")).toBeNull();
+  expect(
+    (screen.getByRole("button", { name: "マイクを止める" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
 });

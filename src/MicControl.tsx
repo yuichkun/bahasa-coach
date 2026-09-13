@@ -7,7 +7,9 @@ export function MicControl({
   stopping = false,
   stopUnconfirmed = false,
   onChange,
+  descriptionId,
 }: {
+  descriptionId?: string;
   muted: boolean;
   disabled: boolean;
   connecting: boolean;
@@ -66,53 +68,54 @@ export function MicControl({
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   }, [disabled, toggle]);
+  const action = stopping
+    ? "停止中…"
+    : connecting
+      ? "接続中…"
+      : stopUnconfirmed
+        ? "停止を再試行"
+        : muted
+          ? "マイクを再開"
+          : "マイクを止める";
   return (
     <div className="mic-control">
       <button
         className="mic-toggle"
         type="button"
         disabled={disabled || waiting}
-        aria-label="マイク"
-        aria-pressed={!muted}
+        aria-label={action}
+        aria-describedby={descriptionId}
         aria-keyshortcuts="M"
         aria-busy={connecting || stopping || waiting}
-        title={`${stopUnconfirmed ? "停止を再試行" : muted ? "マイクをオンにする" : "マイクをオフにする"} (M)`}
+        title={`${action} (M)`}
         data-muted={muted}
         onClick={toggle}
       >
-        <svg
-          width="30"
-          height="30"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {muted ? (
-            <>
-              <path d="M9 5a3 3 0 0 1 6 0v4M9 9v3a3 3 0 0 0 5.1 2.1M5 10v2a7 7 0 0 0 12 4.9M19 10v2c0 .5-.1 1-.2 1.5M12 19v3m-4 0h8M3 3l18 18" />
-            </>
-          ) : (
-            <>
-              <path d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
-            </>
-          )}
-        </svg>
+        <span className="mic-symbol">
+          <svg
+            width="30"
+            height="30"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            {muted ? (
+              <>
+                <path d="M9 5a3 3 0 0 1 6 0v4M9 9v3a3 3 0 0 0 5.1 2.1M5 10v2a7 7 0 0 0 12 4.9M19 10v2c0 .5-.1 1-.2 1.5M12 19v3m-4 0h8M3 3l18 18" />
+              </>
+            ) : (
+              <>
+                <path d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
+              </>
+            )}
+          </svg>
+        </span>
+        <span className="mic-action">{action}</span>
       </button>
-      <span className="mic-state" aria-live="polite">
-        {stopping
-          ? "停止中…"
-          : connecting
-            ? "接続中…"
-            : stopUnconfirmed
-              ? "停止を再試行"
-              : muted
-                ? "マイク オフ"
-                : "マイク オン"}
-      </span>
       <span className="mic-shortcut">
         <kbd>M</kbd> で切り替え
       </span>
