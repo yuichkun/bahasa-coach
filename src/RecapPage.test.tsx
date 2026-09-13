@@ -126,6 +126,6 @@ it("offers retry for a failed direct page request instead of an endless loading 
   );
   expect(screen.getByText("接続できませんでした")).toBeTruthy();
   expect(screen.queryByText("会話全体から、学びを整理しています")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "まとめを作り直す" }));
+  fireEvent.click(screen.getByRole("button", { name: "状態を再確認" }));
   expect(retry).toHaveBeenCalledOnce();
 });

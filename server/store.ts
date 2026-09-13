@@ -44,6 +44,15 @@ export class Store {
         .some((c) => c.name === "language")
     )
       this.db.exec("ALTER TABLE lessons ADD COLUMN language TEXT NOT NULL DEFAULT 'id'");
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(lesson_recaps)")
+        .all()
+        .some((c) => c.name === "progress")
+    )
+      this.db.exec(
+        "ALTER TABLE lesson_recaps ADD COLUMN progress TEXT; ALTER TABLE lesson_recaps ADD COLUMN error_id TEXT;",
+      );
     this.learning = new LearningStore(this);
     this.learning.init();
   }
@@ -357,15 +366,29 @@ export class Store {
       | Row
       | undefined;
     return r
-      ? { status: r.status, data: r.data ? JSON.parse(r.data) : null, error: r.error }
+      ? {
+          status: r.status,
+          data: r.data ? JSON.parse(r.data) : null,
+          error: r.error,
+          ...(r.progress ? { progress: JSON.parse(r.progress) } : {}),
+          ...(r.error_id ? { errorId: r.error_id } : {}),
+        }
       : null;
   }
   saveRecap(id: string, source: string, state: RecapState) {
     this.db
       .prepare(
-        `INSERT INTO lesson_recaps VALUES(?,?,?,?,?) ON CONFLICT(lesson_id) DO UPDATE SET source=excluded.source,status=excluded.status,data=excluded.data,error=excluded.error`,
+        `INSERT INTO lesson_recaps(lesson_id,source,status,data,error,progress,error_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(lesson_id) DO UPDATE SET source=excluded.source,status=excluded.status,data=excluded.data,error=excluded.error,progress=excluded.progress,error_id=excluded.error_id`,
       )
-      .run(id, source, state.status, state.data ? JSON.stringify(state.data) : null, state.error);
+      .run(
+        id,
+        source,
+        state.status,
+        state.data ? JSON.stringify(state.data) : null,
+        state.error,
+        state.progress ? JSON.stringify(state.progress) : null,
+        state.errorId ?? null,
+      );
   }
   close() {
     this.db.close();

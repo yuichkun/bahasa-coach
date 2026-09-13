@@ -34,7 +34,7 @@ it("shows contextual pinyin and opens a ready Chinese definition without a hover
   );
   await waitFor(() => expect(view.container.querySelectorAll("rt").length).toBeGreaterThan(0));
   expect(screen.getByText("yín háng")).toBeTruthy();
-  expect(inspect).toHaveBeenCalled();
+  await waitFor(() => expect(inspect).toHaveBeenCalled());
   await act(async () => fireEvent.mouseEnter(screen.getByRole("button", { name: "银行" })));
   expect(screen.getByRole("dialog", { name: "银行の意味" })).toBeTruthy();
   expect(screen.getByText("銀行")).toBeTruthy();

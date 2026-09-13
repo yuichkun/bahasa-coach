@@ -1,4 +1,4 @@
-import type { TutorBackend } from "./codex.ts";
+import type { TutorBackend, TutorRequestOptions } from "./codex.ts";
 import type { Feedback, Exercise } from "../shared/types.ts";
 export const exercise: Exercise = {
   title: "締め切りを相談する",
@@ -27,7 +27,11 @@ export class FakeBackend implements TutorBackend {
   calls: string[] = [];
   result: unknown = exercise;
   failure: Error | null = null;
-  async requestJson(prompt: string) {
+  async requestJson(
+    prompt: string,
+    _schema?: Record<string, unknown>,
+    _options?: TutorRequestOptions,
+  ) {
     this.calls.push(prompt);
     if (this.failure) throw this.failure;
     return this.result;

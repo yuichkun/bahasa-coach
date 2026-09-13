@@ -1,7 +1,45 @@
 import type { Annotation, Lesson } from "../shared/types";
+import { useEffect, useState } from "react";
+import type { RecapProgress } from "../shared/recap";
 import { transcriptBlocks } from "../shared/transcript";
 import { Gloss } from "./Gloss";
 import "./recap.css";
+
+function GenerationProgress({ progress }: { progress?: RecapProgress }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const elapsed = progress ? Math.max(0, Math.floor((now - progress.startedAt) / 1000)) : null;
+  const remaining = progress ? Math.max(0, Math.ceil((progress.deadlineAt - now) / 1000)) : null;
+  return (
+    <div className="recap-progress" role="status">
+      <h2>
+        {progress?.stage === "queued"
+          ? "生成の開始を待っています"
+          : progress?.stage === "validating"
+            ? "生成したノートの内容を確認しています"
+            : "会話全体から、学びを整理しています"}
+      </h2>
+      {elapsed !== null && (
+        <p>
+          開始から {Math.floor(elapsed / 60)}分{elapsed % 60}秒
+          {remaining === 0
+            ? " · 制限時間に達しました。終了状態を確認しています。"
+            : ` · 制限時間まで ${Math.ceil(remaining! / 60)}分以内`}
+        </p>
+      )}
+      {progress && progress.attempt > 1 && (
+        <p>生成結果の検証に通らなかったため、再生成しています（{progress.attempt}回目）。</p>
+      )}
+      {Boolean(progress?.receivedChars) && (
+        <p>回答を受信中 · {progress!.receivedChars.toLocaleString("ja-JP")}文字</p>
+      )}
+      <p>完了・失敗を確認しています。画面を離れても、保存済みの会話から履歴で確認できます。</p>
+    </div>
+  );
+}
 
 function Highlight({
   text,
@@ -17,6 +55,7 @@ function Highlight({
 export function RecapPage({
   lesson,
   onRetry,
+  onRefresh = onRetry,
   onTranscript,
   onPractice,
   busy,
@@ -24,6 +63,7 @@ export function RecapPage({
 }: {
   lesson: Lesson | null;
   onRetry: () => void;
+  onRefresh?: () => void;
   onTranscript: () => void;
   onPractice: (section: number, point: number) => void;
   busy: boolean;
@@ -32,6 +72,7 @@ export function RecapPage({
   const recap = lesson?.recap;
   const data = recap?.status === "ready" ? recap.data : null;
   const blocks = transcriptBlocks(lesson?.rows || []);
+  if (recap?.status === "ready" && !data) throw new Error("完成したノートのデータがありません。");
   return (
     <article className="recap-page">
       <div className="recap-navigation">
@@ -57,20 +98,28 @@ export function RecapPage({
       {!data && (
         <section className="recap-loading" aria-live="polite">
           {recap?.status === "error" || requestError ? (
-            <>
-              <h2>ノートの作成を、もう一度試しましょう</h2>
-              <p>会話は保存されています。音声接続は終了しています。</p>
+            <div role="alert">
+              <h2>
+                {requestError ? "ノートの状態を確認できません" : "ノートを作成できませんでした"}
+              </h2>
+              {lesson && <p>会話は保存されています。</p>}
               <p className="recap-error">{requestError || recap?.error}</p>
-              <button onClick={onRetry} disabled={busy}>
-                まとめを作り直す
+              {recap?.errorId && (
+                <p>
+                  エラーID: <code>{recap.errorId}</code>（起動したターミナルのログで確認できます）
+                </p>
+              )}
+              <button onClick={requestError ? onRefresh : onRetry} disabled={busy}>
+                {requestError ? "状態を再確認" : "まとめを作り直す"}
               </button>
-            </>
+            </div>
           ) : (
             <>
-              <h2>会話全体から、学びを整理しています</h2>
-              <p>
-                話題や使った表現を確認しながら、使い分けと例文を添えています。画面を離れても、履歴から読めます。
-              </p>
+              {recap?.status === "pending" ? (
+                <GenerationProgress progress={recap.progress} />
+              ) : (
+                <h2>ノートの状態を取得しています</h2>
+              )}
               <div className="recap-skeleton" aria-hidden="true">
                 <span />
                 <span />

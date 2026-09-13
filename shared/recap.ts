@@ -29,8 +29,20 @@ export const recapSchema = z.object({
 });
 export type Recap = z.infer<typeof recapSchema>;
 export type RecapPoint = z.infer<typeof recapPointSchema>;
+export const RECAP_TIMEOUT_MS = 5 * 60_000;
+export type RecapStage = "queued" | "generating" | "validating";
+export interface RecapProgress {
+  stage: RecapStage;
+  startedAt: number;
+  updatedAt: number;
+  deadlineAt: number;
+  attempt: number;
+  receivedChars: number;
+}
 export interface RecapState {
   status: "pending" | "ready" | "error";
   data: Recap | null;
   error: string | null;
+  progress?: RecapProgress;
+  errorId?: string;
 }

@@ -3,7 +3,7 @@ import { Store } from "./store.ts";
 import { RecapService, validateRecap } from "./recap.ts";
 import { FakeBackend } from "./fixtures.test-helper.ts";
 import { transcriptBlocks } from "../shared/transcript.ts";
-import type { Recap } from "../shared/recap.ts";
+import { RECAP_TIMEOUT_MS, type Recap } from "../shared/recap.ts";
 let store: Store, backend: FakeBackend, recap: RecapService, id: string;
 function add(text: string, role = "user", start = 0) {
   store.fragment(id, {
@@ -61,6 +61,7 @@ afterEach(() => {
   recap.close();
   store.close();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 it("uses the entire lesson and persists a structured recap, reusing it on revisit", async () => {
   expect(recap.ensure(id).recap?.status).toBe("pending");
@@ -129,9 +130,13 @@ it("shows recoverable errors and never starts a recap during a thinking break", 
   await recap.idle(id);
   expect(store.get(id).recap?.status).toBe("ready");
 });
-it("resumes unfinished recap jobs and handles an empty lesson without inventing teaching points", async () => {
+it("marks interrupted recap jobs as failed until explicit retry, without inventing empty-lesson points", async () => {
   store.saveRecap(id, "old", { status: "pending", data: null, error: null });
   recap.resumePending();
+  expect(store.get(id).recap?.status).toBe("error");
+  expect(store.get(id).recap?.error).toContain("再起動");
+  expect(backend.calls).toHaveLength(0);
+  recap.ensure(id, true);
   await recap.idle(id);
   expect(store.get(id).recap?.status).toBe("ready");
   const empty = store.create("voice", "ja-id", "空の会話");
@@ -140,4 +145,67 @@ it("resumes unfinished recap jobs and handles an empty lesson without inventing 
   await recap.idle(empty.id);
   expect(store.get(empty.id).recap?.data?.sections).toEqual([]);
   expect(backend.calls).toHaveLength(1);
+});
+
+it("fails a hung job at the whole-job deadline, logs it, and rejects late completion", async () => {
+  vi.useFakeTimers();
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  let resolve!: (value: unknown) => void;
+  let signal: AbortSignal | undefined;
+  vi.spyOn(backend, "requestJson").mockImplementationOnce((_prompt, _schema, options) => {
+    signal = options?.signal;
+    return new Promise((yes) => {
+      resolve = yes;
+    });
+  });
+  const before = store.rows(id);
+  const value = fixture();
+  expect(recap.ensure(id).recap?.progress?.stage).toBe("queued");
+  await vi.advanceTimersByTimeAsync(RECAP_TIMEOUT_MS + 1);
+  await recap.idle(id);
+  const failed = recap.read(id).recap!;
+  expect(failed.status).toBe("error");
+  expect(failed.error).toContain("制限時間");
+  expect(failed.errorId).toBeTruthy();
+  expect(log).toHaveBeenCalled();
+  expect(signal?.aborted).toBe(true);
+  resolve(value);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(recap.read(id).recap).toEqual(failed);
+  expect(store.rows(id)).toEqual(before);
+  recap.ensure(id, true);
+  await recap.idle(id);
+  expect(recap.read(id).recap?.status).toBe("ready");
+});
+
+it("records actual generation progress and exposes an orphaned pending state as failure", async () => {
+  let resolve!: (value: unknown) => void;
+  vi.spyOn(backend, "requestJson").mockImplementationOnce((_prompt, _schema, options) => {
+    options?.onProgress?.({ stage: "generating", receivedChars: 50 });
+    return new Promise((yes) => {
+      resolve = yes;
+    });
+  });
+  recap.ensure(id);
+  expect(recap.read(id).recap?.progress).toMatchObject({
+    stage: "generating",
+    receivedChars: 50,
+    attempt: 1,
+  });
+  resolve(fixture());
+  await recap.idle(id);
+  store.saveRecap(id, "orphan", { status: "pending", data: null, error: null });
+  expect(recap.read(id).recap?.error).toContain("生成処理が見つかりません");
+});
+
+it("keeps the validation cause in a failed job instead of returning a generic success", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  const invalid = fixture();
+  invalid.sections[0].points[0].quote = "An invented quote";
+  backend.result = invalid;
+  recap.ensure(id);
+  await recap.idle(id);
+  expect(recap.read(id).recap?.error).toContain("quote its source");
+  expect(recap.read(id).recap?.progress?.attempt).toBe(2);
+  expect(log).toHaveBeenCalled();
 });

@@ -1,3 +1,5 @@
+import { asError, errorMessage, reportError } from "../shared/errors";
+import { useRecapSync, validateRecapLesson } from "./useRecapSync";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   TOPICS,
@@ -90,7 +92,8 @@ function Icon({ name }: { name: string }) {
 function savedLanguage(): Language {
   try {
     return languageSchema.parse(localStorage.getItem("bahasa.language") || "id");
-  } catch {
+  } catch (error) {
+    reportError("preferences.language", error);
     return "id";
   }
 }
@@ -99,10 +102,16 @@ function restoreDraft(lesson: Lesson) {
     const draft = JSON.parse(localStorage.getItem(`bahasa.draft.${lesson.id}`) || "null");
     if (draft && typeof draft.text === "string" && draft.updatedAt > lesson.updatedAt)
       return { ...lesson, draft: draft.text };
-  } catch {}
+  } catch (error) {
+    reportError(`draft.restore:${lesson.id}`, error);
+    throw new Error("このブラウザの下書きを読み取れませんでした。保存内容を確認してください。", {
+      cause: asError(error),
+    });
+  }
   return lesson;
 }
 export default function App() {
+  const [fatalError, setFatalError] = useState<Error | null>(null);
   const [language, setLanguage] = useState<Language>(savedLanguage);
   const [showPinyin, setShowPinyin] = useState(
     () => localStorage.getItem("bahasa.pinyin") !== "false",
@@ -171,7 +180,10 @@ export default function App() {
       prior?.id === id ? prior : currentVoice.current?.id === id ? currentVoice.current : null,
     );
     try {
-      const lesson = await api<Lesson>(`/lessons/${id}/recap`, { retry });
+      const lesson = validateRecapLesson(
+        await api<Lesson>(`/lessons/${id}/recap`, { retry }, "POST", { timeoutMs: 15_000 }),
+        id,
+      );
       if (recapId.current === id) {
         const next = languageOf(lesson);
         if (next !== languageRef.current) {
@@ -194,9 +206,17 @@ export default function App() {
       }
       updateLesson(lesson);
     } catch (error) {
-      if (recapId.current === id) setRecapError((error as Error).message);
+      reportError(`recap.open:${id}`, error);
+      if (recapId.current === id) setRecapError(errorMessage(error));
     }
   }
+  useRecapSync({
+    id: recapId.current,
+    enabled: view === "recap" && recapLesson?.recap?.status === "pending" && !recapError,
+    connected: connectedEvents,
+    onLesson: updateLesson,
+    onError: setRecapError,
+  });
   useEffect(() => {
     const route = () => {
       const match = location.hash.match(/^#\/recap\/(.+)$/);
@@ -310,7 +330,9 @@ export default function App() {
       ws.onmessage = (e) => {
         try {
           handler.current(JSON.parse(e.data));
-        } catch {}
+        } catch (error) {
+          setFatalError(new Error("アプリの通知処理が失敗しました。", { cause: asError(error) }));
+        }
       };
       ws.onclose = () => {
         setConnectedEvents(false);
@@ -321,7 +343,11 @@ export default function App() {
           retry = setTimeout(connect, 2000);
         }
       };
-      ws.onerror = () => {};
+      ws.onerror = () => {
+        setConnectedEvents(false);
+        setNotice("状態通知の接続が切れました。ノートの状態はサーバーへ確認します。");
+        console.error("[events.connection] WebSocket connection failed");
+      };
     }
     connect();
     void refresh();
@@ -347,15 +373,14 @@ export default function App() {
           (selected === "id" ? localStorage.getItem("bahasa.writing") : null);
         const l = items.find((i) => i.id === id && languageOf(i) === selected);
         if (l) {
-          try {
-            const draft = JSON.parse(localStorage.getItem(`bahasa.draft.${id}`) || "null");
-            if (draft && draft.updatedAt > l.updatedAt) l.draft = draft.text;
-          } catch {}
-          setWriting(l);
+          setWriting(restoreDraft(l));
           setDirection(l.direction);
         }
       })
-      .catch((error) => setNotice(error.message));
+      .catch((error) => {
+        reportError("lessons.load", error);
+        setNotice(errorMessage(error));
+      });
     const timer = setInterval(() => void refresh(), 5000);
     const unload = () => {
       navigator.sendBeacon(
@@ -432,7 +457,8 @@ export default function App() {
     try {
       await fn();
     } catch (e) {
-      setNotice((e as Error).message);
+      reportError(`action:${name}`, e);
+      setNotice(errorMessage(e));
     } finally {
       setBusy("");
     }
@@ -733,6 +759,7 @@ export default function App() {
       <span>{voice?.rows.length ? "新しい会話を始める" : "会話を始める"}</span>
     </button>
   );
+  if (fatalError) throw fatalError;
   return (
     <LanguageContext.Provider value={{ language: displayLanguage, pinyin: showPinyin }}>
       <div
@@ -1003,6 +1030,7 @@ export default function App() {
               busy={Boolean(busy)}
               requestError={recapError}
               onRetry={() => void openRecap(recapId.current, true)}
+              onRefresh={() => void openRecap(recapId.current)}
               onTranscript={() => {
                 if (recapLesson) {
                   if (sessionLessonId.current && sessionLessonId.current !== recapLesson.id) {

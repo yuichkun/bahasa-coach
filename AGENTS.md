@@ -6,3 +6,7 @@
 - Preserve both original transcript fragments and explicit recognition revisions. Language feedback is separate.
 - Text teaching must use official ChatGPT subscription authentication. Never fall back to a paid text API or pass the voice API key to Codex.
 - Never commit `.local/`, `.env`, credentials, or user learning history.
+
+- Never silently swallow unexpected exceptions. Surface handled operational failures in the UI and log their cause with context; unexpected UI failures must reach an error boundary. Do not log credentials or full learner/AI request payloads.
+- Background jobs need a deadline, cancellation, and a persisted ready/error state. UI notifications are an optimization, not the only source of truth. Never leave a failed/disconnected job looking like an active skeleton.
+- Queue bookkeeping may observe a rejection only if the original task still rejects to its owner. Do not globally suppress browser errors from injected scripts.

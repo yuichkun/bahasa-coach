@@ -1,3 +1,4 @@
+import { reportError } from "../shared/errors.ts";
 import { directionFor, directionSchema, languageOf, languageSchema } from "../shared/languages.ts";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
@@ -78,6 +79,7 @@ export async function createApp(options: {
       return reply.code(403).send({ error: "アプリの画面から操作してください。" });
   });
   app.setErrorHandler((error, _req, reply) => {
+    reportError(`http:${_req.method}:${_req.routeOptions.url}`, error);
     const e = error as Error & { statusCode?: number };
     reply
       .code(error instanceof z.ZodError ? 400 : e.statusCode || 500)
@@ -117,7 +119,10 @@ export async function createApp(options: {
         const data = JSON.parse(buffer.toString("utf8"));
         if (data.type === "live.event" && typeof data.event === "object" && data.event)
           live.fromBrowser(owner.data, data.event);
-      } catch {}
+      } catch (error) {
+        reportError("events.client-message", error);
+        socket.close(1003, "Invalid client event");
+      }
     });
     socket.on("close", () => {
       clearInterval(timer);
@@ -171,6 +176,7 @@ export async function createApp(options: {
   });
   app.get("/api/lessons", () => store.list());
   app.get("/api/lessons/:id", (req) => store.get((req.params as { id: string }).id));
+  app.get("/api/lessons/:id/recap", (req) => tutor.recap.read((req.params as { id: string }).id));
   app.post("/api/lessons/:id/recap", (req) => {
     const { retry = false } = z.object({ retry: z.boolean().optional() }).parse(req.body);
     return tutor.recap.ensure((req.params as { id: string }).id, retry);
