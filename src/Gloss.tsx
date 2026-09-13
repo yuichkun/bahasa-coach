@@ -9,6 +9,14 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  sentenceRequest,
+  translationSpans,
+  type TranslationContext,
+  type TranslationRequest,
+} from "../shared/translation";
+import { requestTranslation } from "./translation-cache";
+import { SentenceMeaning } from "./SentenceMeaning";
 import type { Annotation } from "../shared/types";
 import {
   glossKey,
@@ -33,6 +41,7 @@ type Selection = {
   context: string;
   anchor: HTMLElement;
   annotation?: Annotation;
+  translation?: TranslationRequest;
   onOpen?: () => void;
   onInspect?: () => void;
 };
@@ -168,12 +177,15 @@ export function GlossProvider({
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     place();
+    const sizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    if (panel.current) sizeObserver?.observe(panel.current);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     document.addEventListener("mousedown", outside);
     document.addEventListener("keydown", escape);
     return () => {
       observer.disconnect();
+      sizeObserver?.disconnect();
       selection.anchor.removeAttribute("aria-describedby");
       selection.anchor.removeAttribute("aria-expanded");
       window.removeEventListener("resize", place);
@@ -244,6 +256,9 @@ export function GlossProvider({
                 意味を調べています…
               </p>
             )}
+            {selection.translation && (
+              <SentenceMeaning request={selection.translation} onInspect={selection.onInspect} />
+            )}
           </div>,
           document.body,
         )}
@@ -259,6 +274,7 @@ export function Gloss({
   prefetch = true,
   streaming = false,
   highlight = "",
+  translationContext,
   onInspect,
   onOpen,
 }: {
@@ -267,6 +283,7 @@ export function Gloss({
   prefetch?: boolean;
   streaming?: boolean;
   highlight?: string;
+  translationContext?: TranslationContext;
   onInspect?: () => void;
   onOpen?: () => void;
 }) {
@@ -277,6 +294,20 @@ export function Gloss({
     seedAnnotations(text, JSON.parse(annotationKey));
   }, [text, annotationKey]);
   const shouldWarm = prefetch && Boolean(controller?.prefetch);
+  const translationContextKey = JSON.stringify(translationContext);
+  useEffect(() => {
+    if (!shouldWarm || !translationContext) return;
+    const timer = setTimeout(
+      () => {
+        for (const span of translationSpans(text)) {
+          const request = sentenceRequest(text, span.start, translationContext);
+          if (request) void requestTranslation(request, true).catch(() => {});
+        }
+      },
+      streaming ? 1200 : 200,
+    );
+    return () => clearTimeout(timer);
+  }, [text, translationContextKey, shouldWarm, streaming]);
   useEffect(() => {
     if (shouldWarm) return warmGlossarySource(sourceId, text, streaming);
   }, [sourceId, text, streaming, shouldWarm]);
@@ -322,6 +353,9 @@ export function Gloss({
           context,
           anchor,
           annotation: lookup.get(term.toLocaleLowerCase("id")),
+          translation: translationContext
+            ? sentenceRequest(text, index, translationContext) || undefined
+            : undefined,
           onInspect,
           onOpen,
         },

@@ -10,6 +10,7 @@ import { CodexBackend, type TutorBackend } from "./codex.ts";
 import { Tutor } from "./tutor.ts";
 import { LiveManager } from "./live.ts";
 import { words, normalizeWord } from "../shared/glossary.ts";
+import { translationRequestSchema } from "../shared/translation.ts";
 
 export async function createApp(options: {
   dataDir: string;
@@ -124,6 +125,12 @@ export async function createApp(options: {
     socket.on("error", () => {});
   });
   app.get("/api/status", status);
+  app.post("/api/translations", async (req) => {
+    const { requests } = z
+      .object({ requests: z.array(translationRequestSchema).min(1).max(8) })
+      .parse(req.body);
+    return { entries: await Promise.all(requests.map((r) => tutor.translator.translate(r))) };
+  });
   app.post("/api/auth/login", () => backend.login());
   app.post("/api/auth/logout", async () => {
     await backend.logout();
@@ -335,6 +342,7 @@ export async function createApp(options: {
     return live.pause(owner);
   });
   app.addHook("onClose", async () => {
+    tutor.translator.close();
     tutor.recap.close();
     tutor.speech.close();
     tutor.glossary.close();

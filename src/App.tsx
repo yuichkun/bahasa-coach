@@ -17,6 +17,7 @@ import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
 import { MicControl } from "./MicControl";
+import { COACH_NAME, COACH_DESCRIPTION } from "../shared/coach";
 import { RecapPage } from "./RecapPage";
 
 type View = "voice" | "writing" | "history" | "settings" | "recap";
@@ -625,11 +626,20 @@ export default function App() {
                 blocks.map((block, blockIndex) => (
                   <article className={"caption-group " + block.role} key={block.id}>
                     <span className="speaker">
-                      {block.role === "assistant" ? "コーチ" : "あなた"}
+                      {block.role === "assistant" ? COACH_NAME : "あなた"}
                     </span>
                     <p className="caption-text" dir="auto">
                       <Gloss
                         text={block.text}
+                        translationContext={{
+                          speaker: block.role,
+                          before: blocks
+                            .slice(Math.max(0, blockIndex - 2), blockIndex)
+                            .map((b) => ({ role: b.role, text: b.text })),
+                          after: blocks
+                            .slice(blockIndex + 1, blockIndex + 3)
+                            .map((b) => ({ role: b.role, text: b.text })),
+                        }}
                         prefetch={blockIndex >= blocks.length - 2}
                         streaming={running}
                         onOpen={() => setFollow(false)}
@@ -651,8 +661,8 @@ export default function App() {
                 ))
               ) : (
                 <div className="voice-empty">
-                  <h1>話しましょう。</h1>
-                  <p>単語に触れると、意味を確認できます。</p>
+                  <h1>{COACH_NAME} と話しましょう。</h1>
+                  <p>{COACH_DESCRIPTION}</p>
                   {!status?.voice.configured && (
                     <button className="text-button" onClick={() => setView("settings")}>
                       音声 API キーを設定する

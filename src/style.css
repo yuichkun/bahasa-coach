@@ -915,3 +915,40 @@ main {
   font-size: 12px;
   white-space: nowrap;
 }
+
+.word-popover {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sentence-meaning {
+  border-top: 1px solid #e2e5df;
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.sentence-meaning > span {
+  display: block;
+  font-size: 11px;
+  color: #62705e;
+  margin-bottom: 6px;
+}
+.sentence-meaning > p {
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 0 0 8px;
+  color: #293c2c;
+}
+.sentence-meaning > small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #737870;
+}
+.sentence-meaning .sentence-loading {
+  font-size: 12px;
+  color: #70766b;
+}
+.sentence-meaning button {
+  font-size: 12px;
+  padding: 4px 0;
+}

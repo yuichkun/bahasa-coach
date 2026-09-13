@@ -10,7 +10,13 @@ export interface TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean; recap?: boolean },
+    options?: {
+      interactive?: boolean;
+      prefetch?: boolean;
+      feedback?: boolean;
+      recap?: boolean;
+      translation?: boolean;
+    },
   ): Promise<unknown>;
   status(): Promise<AppStatus["chatgpt"]>;
   login(): Promise<{ authUrl: string }>;
@@ -31,6 +37,7 @@ export class CodexBackend implements TutorBackend {
   private prefetchQueue: Promise<unknown> = Promise.resolve();
   private feedbackQueue: Promise<unknown> = Promise.resolve();
   private recapQueue: Promise<unknown> = Promise.resolve();
+  private translationQueue: Promise<unknown> = Promise.resolve();
   private loginPending = false;
   private loginError: string | null = null;
   private dataDir: string;
@@ -185,20 +192,29 @@ export class CodexBackend implements TutorBackend {
   requestJson(
     prompt: string,
     schema: Json,
-    options?: { interactive?: boolean; prefetch?: boolean; feedback?: boolean; recap?: boolean },
+    options?: {
+      interactive?: boolean;
+      prefetch?: boolean;
+      feedback?: boolean;
+      recap?: boolean;
+      translation?: boolean;
+    },
   ): Promise<unknown> {
     const task = (
-      options?.recap
-        ? this.recapQueue
-        : options?.feedback
-          ? this.feedbackQueue
-          : options?.prefetch
-            ? this.prefetchQueue
-            : options?.interactive
-              ? this.lookupQueue
-              : this.queue
+      options?.translation
+        ? this.translationQueue
+        : options?.recap
+          ? this.recapQueue
+          : options?.feedback
+            ? this.feedbackQueue
+            : options?.prefetch
+              ? this.prefetchQueue
+              : options?.interactive
+                ? this.lookupQueue
+                : this.queue
     ).then(() => this.run(prompt, schema));
-    if (options?.recap) this.recapQueue = task.catch(() => {});
+    if (options?.translation) this.translationQueue = task.catch(() => {});
+    else if (options?.recap) this.recapQueue = task.catch(() => {});
     else if (options?.feedback) this.feedbackQueue = task.catch(() => {});
     else if (options?.prefetch) this.prefetchQueue = task.catch(() => {});
     else if (options?.interactive) this.lookupQueue = task.catch(() => {});
