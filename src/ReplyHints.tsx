@@ -15,11 +15,10 @@ export function ReplyHints({ lesson, onInspect }: { lesson: Lesson; onInspect: (
     latest = useRef(""),
     mounted = useRef(true);
   const blocks = transcriptBlocks(lesson.rows),
-    coach = blocks.filter((b) => b.role === "assistant").at(-1),
-    user = blocks.filter((b) => b.role === "user").at(-1);
-  const coachEnd = coach ? Math.max(...coach.rows.map((r) => r.endMs)) : 0;
-  const answered = user && Math.max(...user.rows.map((r) => r.endMs)) > coachEnd;
-  const source = enabled && !answered ? coach?.text.trim() || "" : "";
+    coach = blocks.filter((b) => b.role === "assistant").at(-1);
+  // Learner transcripts update while a hint is being read aloud. Keep its source
+  // until the coach's utterance changes, including while hints are still loading.
+  const source = enabled ? coach?.text.trim() || "" : "";
   latest.current = source;
   useEffect(() => {
     mounted.current = true;
