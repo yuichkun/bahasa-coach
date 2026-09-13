@@ -101,9 +101,7 @@ export function LearningLoop({
       <button className="primary" disabled={busy} onClick={() => onPractice(focus, "retry")}>
         {lesson.kind === "voice" ? "自分でもう一度話す" : "自分でもう一度書く"}
       </button>
-      <p className="next-step">
-        見本を閉じて練習し、その回答を確認します。字幕が違う場合は、先に修正してください。
-      </p>
+      <p className="next-step">見本を閉じて練習し、その回答を確認します。</p>
       {focus.state === "transfer_due" && (
         <p className="muted">言い直しは確認済み。次は別の場面で試します。</p>
       )}

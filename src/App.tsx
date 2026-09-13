@@ -17,6 +17,7 @@ import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
 import { VoiceActions } from "./VoiceActions";
+import { MicControl } from "./MicControl";
 
 type View = "voice" | "writing" | "history" | "settings";
 const labels: Record<View, string> = {
@@ -568,29 +569,25 @@ export default function App() {
             {running && owns && voice && (
               <ReplyHints key={voice.id} lesson={voice} onInspect={() => inspect(voice)} />
             )}
-            <div className="voice-controls">
+            <div className={`voice-controls${running ? " is-running" : ""}`}>
               {running ? (
                 <>
                   <button
-                    className="primary"
+                    className="end-call"
                     disabled={(!owns && !connecting) || busy === "stop"}
                     onClick={() => void stop()}
                   >
                     {busy === "stop" ? "終了中…" : voice?.practice ? "回答を確認して終了" : "終了"}
                   </button>
-                  <button
-                    className="quiet"
-                    disabled={!owns}
-                    onClick={() => {
-                      voiceClient.current?.mute(!muted);
-                      setMuted(!muted);
+                  <MicControl
+                    muted={muted}
+                    connecting={connecting}
+                    disabled={!owns || active?.status !== "active" || busy === "stop"}
+                    onChange={(next) => {
+                      voiceClient.current?.mute(next);
+                      setMuted(next);
                     }}
-                  >
-                    {muted ? "マイクを再開" : "マイクを停止"}
-                  </button>
-                  <span className="connection-state">
-                    {connecting ? "接続中…" : muted ? "マイク停止中" : "会話中"}
-                  </span>
+                  />
                 </>
               ) : (
                 <button
