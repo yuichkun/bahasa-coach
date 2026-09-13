@@ -1,55 +1,62 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { translationKey, type TranslationRequest } from "../shared/translation";
 import { peekTranslation, requestTranslation } from "./translation-cache";
 
 export function SentenceMeaning({
   request,
-  onInspect,
+  streaming = false,
 }: {
   request: TranslationRequest;
-  onInspect?: () => void;
+  streaming?: boolean;
 }) {
   const key = translationKey(request);
-  const [result, setResult] = useState<{ key: string; value: string } | null>(null);
+  // Keep a readable translation while subsequent speech adds context. A change
+  // to the sentence or its preceding context must invalidate the displayed text.
+  const anchor = translationKey({ ...request, after: [] });
+  const [result, setResult] = useState<{ anchor: string; value: string } | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const inspected = useRef("");
-  const value = peekTranslation(request) || (result?.key === key ? result.value : "");
+  const cached = peekTranslation(request);
+  const value = cached || (result?.anchor === anchor ? result.value : "");
   useEffect(() => {
     let alive = true;
     setError("");
-    void requestTranslation(request)
-      .then((value) => {
-        if (alive) setResult({ key, value });
-      })
-      .catch(() => {
-        if (alive) setError("文の訳を取得できませんでした。");
-      });
+    const receive = (value: string) => {
+      if (alive) setResult({ anchor, value });
+    };
+    const hit = peekTranslation(request);
+    if (hit) {
+      receive(hit);
+      return;
+    }
+    const run = () => {
+      void requestTranslation(request)
+        .then(receive)
+        .catch(() => {
+          if (alive) setError("訳を取得できませんでした。");
+        });
+    };
+    const timer = streaming ? setTimeout(run, 1200) : undefined;
+    if (!streaming) run();
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
     };
-  }, [key, retry]);
-  useEffect(() => {
-    if (value && inspected.current !== key) {
-      inspected.current = key;
-      onInspect?.();
-    }
-  }, [value, key, onInspect]);
+  }, [key, retry, streaming]);
   return (
-    <section className="sentence-meaning" aria-label="文全体の意味">
-      <span>文全体</span>
-      {value ? (
-        <p lang="ja">{value}</p>
-      ) : error ? (
-        <button className="text-button" onClick={() => setRetry((n) => n + 1)}>
-          訳を再取得する
-        </button>
-      ) : (
-        <p className="sentence-loading" role="status">
-          前後の会話から訳しています…
-        </p>
-      )}
-      <small lang="id">{request.sentence}</small>
-    </section>
+    <p
+      className={`caption-translation${!value && !error ? " is-loading" : ""}`}
+      lang="ja"
+      aria-label="日本語訳"
+    >
+      {value ||
+        (error ? (
+          <button className="text-button" onClick={() => setRetry((n) => n + 1)}>
+            訳を再取得する
+          </button>
+        ) : (
+          "訳しています…"
+        ))}
+    </p>
   );
 }

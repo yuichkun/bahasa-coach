@@ -84,17 +84,7 @@ export function ReplyHints({ lesson, onInspect }: { lesson: Lesson; onInspect: (
           {hints.map((h, i) => (
             <li key={i}>
               <p>
-                <Gloss
-                  text={h.text}
-                  onInspect={onInspect}
-                  translationContext={{
-                    speaker: "user",
-                    before: blocks
-                      .slice(Math.max(0, blocks.indexOf(coach!) - 2), blocks.indexOf(coach!) + 1)
-                      .map((b) => ({ role: b.role, text: b.text })),
-                    after: [],
-                  }}
-                />
+                <Gloss text={h.text} onInspect={onInspect} />
               </p>
               <small>{h.intent}</small>
             </li>

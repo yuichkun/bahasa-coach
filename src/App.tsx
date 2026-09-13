@@ -17,6 +17,7 @@ import { LearningLoop } from "./LearningLoop";
 import { ReplyHints } from "./ReplyHints";
 import { SpeechNote } from "./SpeechNote";
 import { MicControl } from "./MicControl";
+import { CaptionText } from "./CaptionText";
 import { COACH_NAME, COACH_DESCRIPTION } from "../shared/coach";
 import { RecapPage } from "./RecapPage";
 
@@ -321,6 +322,16 @@ export default function App() {
     if (follow && captionArea.current)
       captionArea.current.scrollTop = captionArea.current.scrollHeight;
   }, [voice?.rows, follow, view]);
+  useEffect(() => {
+    const area = captionArea.current;
+    if (!area || !follow) return;
+    const observer = new MutationObserver(() => {
+      area.scrollTop = area.scrollHeight;
+    });
+    observer.observe(area, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [follow, view]);
+
   const active = status?.voice.active,
     owns = active?.owner === owner.current,
     running = Boolean(active) || connecting,
@@ -628,24 +639,22 @@ export default function App() {
                     <span className="speaker">
                       {block.role === "assistant" ? COACH_NAME : "あなた"}
                     </span>
-                    <p className="caption-text" dir="auto">
-                      <Gloss
-                        text={block.text}
-                        translationContext={{
-                          speaker: block.role,
-                          before: blocks
-                            .slice(Math.max(0, blockIndex - 2), blockIndex)
-                            .map((b) => ({ role: b.role, text: b.text })),
-                          after: blocks
-                            .slice(blockIndex + 1, blockIndex + 3)
-                            .map((b) => ({ role: b.role, text: b.text })),
-                        }}
-                        prefetch={blockIndex >= blocks.length - 2}
-                        streaming={running}
-                        onOpen={() => setFollow(false)}
-                        onInspect={() => inspect(voice)}
-                      />
-                    </p>
+                    <CaptionText
+                      text={block.text}
+                      context={{
+                        speaker: block.role,
+                        before: blocks
+                          .slice(Math.max(0, blockIndex - 2), blockIndex)
+                          .map((b) => ({ role: b.role, text: b.text })),
+                        after: blocks
+                          .slice(blockIndex + 1, blockIndex + 3)
+                          .map((b) => ({ role: b.role, text: b.text })),
+                      }}
+                      prefetch={blockIndex >= blocks.length - 2}
+                      streaming={running}
+                      onOpen={() => setFollow(false)}
+                      onInspect={() => inspect(voice)}
+                    />
                     {block.role === "user" && voice && (
                       <SpeechNote
                         key={block.id}

@@ -13,7 +13,6 @@ type Pending = {
 };
 const pending = new Map<string, Pending>(),
   queue = new Map<string, Pending>();
-const failed = new Map<string, number>();
 const storageKey = "bahasa.sentences.v1";
 let loaded = false,
   timer: ReturnType<typeof setTimeout> | undefined,
@@ -37,14 +36,12 @@ export function peekTranslation(request: TranslationRequest) {
   hydrate();
   return cache.get(translationKey(request));
 }
-export function requestTranslation(request: TranslationRequest, prefetch = false): Promise<string> {
+export function requestTranslation(request: TranslationRequest): Promise<string> {
   const key = translationKey(request),
     hit = peekTranslation(request);
   if (hit) return Promise.resolve(hit);
   const prior = pending.get(key);
   if (prior) return prior.promise;
-  if (prefetch && (failed.get(key) || 0) > Date.now())
-    return Promise.reject(new Error("翻訳の再試行を待っています。"));
   let resolve!: Pending["resolve"], reject!: Pending["reject"];
   const promise = new Promise<string>((yes, no) => {
     resolve = yes;
@@ -53,12 +50,6 @@ export function requestTranslation(request: TranslationRequest, prefetch = false
   const entry = { request, promise, resolve, reject };
   pending.set(key, entry);
   queue.set(key, entry);
-  while (queue.size > 24) {
-    const oldest = queue.keys().next().value!;
-    queue.get(oldest)!.reject(new Error("先読みを入れ替えました。"));
-    queue.delete(oldest);
-    pending.delete(oldest);
-  }
   if (!running && !timer)
     timer = setTimeout(() => {
       timer = undefined;
@@ -81,13 +72,11 @@ async function flush() {
           const value = result.entries?.find((e) => e.key === key)?.translation;
           if (!value?.trim()) throw new Error("文の訳を取得できませんでした。");
           cache.set(key, value);
-          failed.delete(key);
           job.resolve(value);
         }
         save();
       } catch (error) {
-        for (const [key, job] of batch) {
-          failed.set(key, Date.now() + 30_000);
+        for (const [, job] of batch) {
           job.reject(error as Error);
         }
       } finally {
@@ -100,7 +89,6 @@ async function flush() {
 }
 export function clearTranslationCache() {
   cache.clear();
-  failed.clear();
   queue.clear();
   pending.clear();
   if (timer) clearTimeout(timer);
